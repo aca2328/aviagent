@@ -1,0 +1,95 @@
+{{if .error}}
+<!-- Error Message -->
+<div class="message error-message">
+    <div class="message-header">
+        <strong><i class="fas fa-exclamation-triangle"></i> Error</strong>
+        <span class="timestamp">{{now.Format "15:04:05"}}</span>
+    </div>
+    <div class="message-content">
+        <div class="alert alert-danger">
+            {{.error}}
+        </div>
+    </div>
+</div>
+{{else}}
+<!-- User Message -->
+{{if .userMessage}}
+<div class="message user-message">
+    <div class="message-header">
+        <strong><i class="fas fa-user"></i> You</strong>
+        <span class="timestamp">{{.timestamp}}</span>
+    </div>
+    <div class="message-content">
+        {{.userMessage}}
+    </div>
+</div>
+{{end}}
+
+<!-- Assistant Response -->
+{{if .assistantMessage}}
+<div class="message assistant-message">
+    <div class="message-header">
+        <strong><i class="fas fa-robot"></i> Assistant</strong>
+        <span class="timestamp">{{.timestamp}}</span>
+        {{if .model}}
+        <span class="badge bg-secondary ms-2">{{.model}}</span>
+        {{end}}
+    </div>
+    <div class="message-content">
+        <!-- Format the message content with proper line breaks and code blocks -->
+        {{range $line := (split .assistantMessage "\n")}}
+            {{if hasPrefix $line "```"}}
+                {{if hasSuffix $line "```"}}
+                    <!-- Single line code -->
+                    <code class="bg-light px-2 py-1 rounded">{{substr $line 3 (sub (len $line) 6)}}</code>
+                {{else}}
+                    <!-- Start of code block -->
+                    <pre class="bg-light p-3 rounded"><code>
+                {{end}}
+            {{else if eq $line "```"}}
+                <!-- End of code block -->
+                </code></pre>
+            {{else if hasPrefix $line "API Result:"}}
+                <h6 class="mt-3 mb-2"><i class="fas fa-code"></i> {{$line}}</h6>
+            {{else if hasPrefix $line "##"}}
+                <h5 class="mt-3 mb-2">{{substr $line 2}}</h5>
+            {{else if hasPrefix $line "#"}}
+                <h4 class="mt-3 mb-2">{{substr $line 1}}</h4>
+            {{else if hasPrefix $line "**"}}
+                <strong>{{substr $line 2 (sub (len $line) 4)}}</strong>
+            {{else if hasPrefix $line "-"}}
+                <li>{{substr $line 2}}</li>
+            {{else if ne $line ""}}
+                <p>{{$line}}</p>
+            {{end}}
+        {{end}}
+        
+        <!-- Tool Calls Information -->
+        {{if .toolCalls}}
+        <div class="tool-calls mt-3">
+            <h6><i class="fas fa-tools"></i> API Operations Executed:</h6>
+            <div class="list-group">
+                {{range .toolCalls}}
+                <div class="list-group-item">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <strong>{{.Function.Name}}</strong>
+                            {{if .Args}}
+                            <small class="text-muted d-block">
+                                {{range $key, $value := .Args}}
+                                <span class="badge bg-info me-1">{{$key}}: {{$value}}</span>
+                                {{end}}
+                            </small>
+                            {{end}}
+                        </div>
+                        <span class="badge bg-success">✓ Executed</span>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+    </div>
+</div>
+{{end}}
+{{end}}

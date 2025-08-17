@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.title}}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/style.css" rel="stylesheet">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body>
+    <div class="container-fluid h-100">
+        <div class="row h-100">
+            <!-- Sidebar -->
+            <div class="col-md-3 col-lg-2 sidebar">
+                <div class="sidebar-header">
+                    <h4><i class="fas fa-cloud"></i> VMware Avi</h4>
+                    <p class="text-muted">LLM Agent</p>
+                </div>
+                
+                <!-- Model Selection -->
+                <div class="model-selection mb-3">
+                    <label for="model-select" class="form-label">
+                        <i class="fas fa-robot"></i> Model
+                    </label>
+                    <select id="model-select" class="form-select" name="model">
+                        {{range .models}}
+                        <option value="{{.}}" {{if eq . $.defaultModel}}selected{{end}}>{{.}}</option>
+                        {{end}}
+                    </select>
+                </div>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <h6><i class="fas fa-bolt"></i> Quick Actions</h6>
+                    <div class="list-group list-group-flush">
+                        <a href="#" class="list-group-item list-group-item-action quick-action" 
+                           data-query="List all virtual services">
+                            <i class="fas fa-server"></i> Virtual Services
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action quick-action" 
+                           data-query="Show me all pools with their health status">
+                            <i class="fas fa-swimming-pool"></i> Pools Status
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action quick-action" 
+                           data-query="List service engines and their status">
+                            <i class="fas fa-cogs"></i> Service Engines
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action quick-action" 
+                           data-query="Show me health monitors">
+                            <i class="fas fa-heartbeat"></i> Health Monitors
+                        </a>
+                        <a href="#" class="list-group-item list-group-item-action quick-action" 
+                           data-query="Get analytics for virtual services">
+                            <i class="fas fa-chart-line"></i> Analytics
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Connection Status -->
+                <div class="connection-status mt-3">
+                    <div id="connection-indicator" class="d-flex align-items-center">
+                        <div class="status-dot me-2"></div>
+                        <small class="text-muted">Checking connection...</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Chat Area -->
+            <div class="col-md-9 col-lg-10 main-content">
+                <div class="chat-container">
+                    <!-- Chat Header -->
+                    <div class="chat-header">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <h5><i class="fas fa-comments"></i> Chat</h5>
+                            <div class="d-flex align-items-center">
+                                <button class="btn btn-outline-secondary btn-sm me-2" id="clear-chat">
+                                    <i class="fas fa-trash"></i> Clear
+                                </button>
+                                <button class="btn btn-outline-info btn-sm" id="export-chat">
+                                    <i class="fas fa-download"></i> Export
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Messages -->
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="welcome-message">
+                            <div class="message assistant-message">
+                                <div class="message-header">
+                                    <strong><i class="fas fa-robot"></i> Assistant</strong>
+                                    <span class="timestamp">{{now.Format "15:04:05"}}</span>
+                                </div>
+                                <div class="message-content">
+                                    <p>Hello! I'm your VMware Avi Load Balancer assistant. I can help you manage and monitor your load balancer infrastructure using natural language.</p>
+                                    
+                                    <p><strong>Here are some things I can help you with:</strong></p>
+                                    <ul>
+                                        <li>📊 <strong>Virtual Services:</strong> List, create, update, delete, and scale virtual services</li>
+                                        <li>🏊 <strong>Pools:</strong> Manage backend pools and server health</li>
+                                        <li>💓 <strong>Health Monitors:</strong> Configure and monitor health checks</li>
+                                        <li>⚙️ <strong>Service Engines:</strong> Monitor service engine status and performance</li>
+                                        <li>📈 <strong>Analytics:</strong> Get performance metrics and analytics data</li>
+                                    </ul>
+                                    
+                                    <p><strong>Example queries:</strong></p>
+                                    <ul>
+                                        <li>"What are the current virtual services?"</li>
+                                        <li>"Show me pools with health issues"</li>
+                                        <li>"Create a new virtual service for my web application"</li>
+                                        <li>"Scale out the backend pool for app1"</li>
+                                        <li>"Get performance metrics for the last hour"</li>
+                                    </ul>
+                                    
+                                    <p>You can also use the quick actions in the sidebar or just type your question naturally!</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Chat Input -->
+                    <div class="chat-input">
+                        <form hx-post="/htmx/chat" 
+                              hx-target="#chat-messages" 
+                              hx-swap="beforeend"
+                              hx-include="[name='model']"
+                              hx-indicator="#loading-indicator"
+                              id="chat-form">
+                            <div class="input-group">
+                                <input type="text" 
+                                       class="form-control" 
+                                       name="message" 
+                                       id="message-input"
+                                       placeholder="Ask me about your Avi Load Balancer (e.g., 'List all virtual services')"
+                                       autocomplete="off"
+                                       required>
+                                <button class="btn btn-primary" type="submit" id="send-button">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <!-- Loading indicator -->
+                        <div id="loading-indicator" class="htmx-indicator">
+                            <div class="d-flex align-items-center mt-2">
+                                <div class="spinner-border spinner-border-sm me-2" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <span class="text-muted">Processing your request...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
+    
+    <script>
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            // Auto-focus on message input
+            document.getElementById('message-input').focus();
+            
+            // Handle quick actions
+            document.querySelectorAll('.quick-action').forEach(function(element) {
+                element.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const query = this.getAttribute('data-query');
+                    document.getElementById('message-input').value = query;
+                });
+            });
+
+            // Check connection status
+            checkConnectionStatus();
+            setInterval(checkConnectionStatus, 30000); // Check every 30 seconds
+
+            // Clear chat functionality
+            document.getElementById('clear-chat').addEventListener('click', function() {
+                if (confirm('Are you sure you want to clear the chat?')) {
+                    const chatMessages = document.getElementById('chat-messages');
+                    // Keep the welcome message
+                    const welcomeMessage = chatMessages.querySelector('.welcome-message');
+                    chatMessages.innerHTML = '';
+                    if (welcomeMessage) {
+                        chatMessages.appendChild(welcomeMessage);
+                    }
+                }
+            });
+
+            // Handle form submission
+            document.getElementById('chat-form').addEventListener('htmx:afterRequest', function(event) {
+                // Clear the input after successful submission
+                if (event.detail.successful) {
+                    document.getElementById('message-input').value = '';
+                    // Scroll to bottom
+                    const chatMessages = document.getElementById('chat-messages');
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+                
+                // Re-focus on input
+                document.getElementById('message-input').focus();
+            });
+
+            // Handle Enter key in input
+            document.getElementById('message-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    document.getElementById('chat-form').dispatchEvent(new Event('submit'));
+                }
+            });
+        });
+
+        function checkConnectionStatus() {
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {
+                    const indicator = document.getElementById('connection-indicator');
+                    const statusDot = indicator.querySelector('.status-dot');
+                    const statusText = indicator.querySelector('small');
+                    
+                    if (data.avi_status === 'healthy' && data.llm_status === 'healthy') {
+                        statusDot.className = 'status-dot status-healthy me-2';
+                        statusText.textContent = 'Connected';
+                        statusText.className = 'text-success';
+                    } else {
+                        statusDot.className = 'status-dot status-error me-2';
+                        statusText.textContent = 'Connection Issues';
+                        statusText.className = 'text-danger';
+                    }
+                })
+                .catch(error => {
+                    const indicator = document.getElementById('connection-indicator');
+                    const statusDot = indicator.querySelector('.status-dot');
+                    const statusText = indicator.querySelector('small');
+                    
+                    statusDot.className = 'status-dot status-error me-2';
+                    statusText.textContent = 'Connection Failed';
+                    statusText.className = 'text-danger';
+                });
+        }
+
+        // Export chat functionality
+        document.getElementById('export-chat').addEventListener('click', function() {
+            const chatMessages = document.getElementById('chat-messages');
+            const messages = chatMessages.querySelectorAll('.message:not(.welcome-message .message)');
+            
+            let exportText = 'VMware Avi LLM Agent - Chat Export\n';
+            exportText += '=====================================\n\n';
+            
+            messages.forEach(function(message) {
+                const header = message.querySelector('.message-header strong').textContent;
+                const timestamp = message.querySelector('.timestamp').textContent;
+                const content = message.querySelector('.message-content').textContent.trim();
+                
+                exportText += `${header} (${timestamp}):\n${content}\n\n`;
+            });
+            
+            // Create and download file
+            const blob = new Blob([exportText], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `avi-chat-${new Date().toISOString().split('T')[0]}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
