@@ -3,7 +3,7 @@ import os
 
 # Let me create the project structure and all necessary files
 project_structure = {
-    "VMware-Avi-LLM-Agent/": {
+    "aviagent/": {
         "cmd/": {
             "server/": {
                 "main.go": "Main application entry point"

@@ -21,7 +21,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \
-    -o vmware-avi-llm-agent \
+    -o aviagent \
     ./cmd/server
 
 # Stage 2: Runtime stage
@@ -34,7 +34,7 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Copy the binary
-COPY --from=builder /app/vmware-avi-llm-agent /vmware-avi-llm-agent
+COPY --from=builder /app/aviagent /aviagent
 
 # Copy web assets
 COPY --from=builder /app/web /web
@@ -48,13 +48,13 @@ RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -s /bin/sh -u 1000 -G appgroup appuser
 
 # Copy binary from builder
-COPY --from=builder /app/vmware-avi-llm-agent /usr/local/bin/vmware-avi-llm-agent
+COPY --from=builder /app/aviagent /usr/local/bin/aviagent
 
 # Copy web assets
 COPY --from=builder /app/web /web
 
 # Set permissions
-RUN chmod +x /usr/local/bin/vmware-avi-llm-agent \
+RUN chmod +x /usr/local/bin/aviagent \
     && chown -R appuser:appgroup /web
 
 # Switch to non-root user
@@ -72,5 +72,5 @@ ENV GIN_MODE=release
 ENV TZ=UTC
 
 # Run the binary
-ENTRYPOINT ["/usr/local/bin/vmware-avi-llm-agent"]
-CMD ["-config", "/etc/vmware-avi-llm-agent/config.yaml"]
+ENTRYPOINT ["/usr/local/bin/aviagent"]
+CMD ["-config", "/etc/aviagent/config.yaml"]

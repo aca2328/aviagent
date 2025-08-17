@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"vmware-avi-llm-agent/internal/config"
+	"aviagent/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

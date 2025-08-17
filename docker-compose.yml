@@ -23,7 +23,7 @@ services:
       # Server Configuration
       - GIN_MODE=release
     volumes:
-      - ./config.yaml:/etc/vmware-avi-llm-agent/config.yaml:ro
+      - ./config.yaml:/etc/aviagent/config.yaml:ro
     depends_on:
       - ollama
     networks:

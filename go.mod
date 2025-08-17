@@ -1,4 +1,4 @@
-module vmware-avi-llm-agent
+module aviagent
 
 go 1.21
 

@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"time"
 
-	"vmware-avi-llm-agent/internal/config"
-	"vmware-avi-llm-agent/internal/web"
+	"aviagent/internal/config"
+	"aviagent/internal/web"
 
 	"go.uber.org/zap"
 )

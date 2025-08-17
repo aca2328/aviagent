@@ -37,7 +37,7 @@ A Go-based web agent that allows users to interact with the VMware Avi Load Bala
 ### 1. Clone the Repository
 ```bash
 git clone <repository-url>
-cd vmware-avi-llm-agent
+cd aviagent
 ```
 
 ### 2. Configure Environment
@@ -164,21 +164,21 @@ go mod download
 go test ./...
 
 # Build binary
-go build -o vmware-avi-llm-agent ./cmd/server
+go build -o aviagent ./cmd/server
 
 # Run application
-./vmware-avi-llm-agent -config config.yaml
+./aviagent -config config.yaml
 ```
 
 ### Development with Docker
 ```bash
 # Build development image
-docker build -t vmware-avi-llm-agent:dev .
+docker build -t aviagent:dev .
 
 # Run with development configuration
 docker run -p 8080:8080 \
-  -v $(pwd)/config.yaml:/etc/vmware-avi-llm-agent/config.yaml \
-  vmware-avi-llm-agent:dev
+  -v $(pwd)/config.yaml:/etc/aviagent/config.yaml \
+  aviagent:dev
 ```
 
 ### Testing
@@ -200,7 +200,7 @@ go test -bench=. ./...
 
 ### Project Structure
 ```
-vmware-avi-llm-agent/
+aviagent/
 ├── cmd/
 │   └── server/          # Application entry point
 ├── internal/
@@ -352,20 +352,20 @@ log:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vmware-avi-llm-agent
+  name: aviagent
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: vmware-avi-llm-agent
+      app: aviagent
   template:
     metadata:
       labels:
-        app: vmware-avi-llm-agent
+        app: aviagent
     spec:
       containers:
       - name: app
-        image: vmware-avi-llm-agent:latest
+        image: aviagent:latest
         ports:
         - containerPort: 8080
         env:

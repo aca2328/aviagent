@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"vmware-avi-llm-agent/internal/config"
+	"aviagent/internal/config"
 
 	"go.uber.org/zap"
 )

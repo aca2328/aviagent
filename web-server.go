@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"vmware-avi-llm-agent/internal/avi"
-	"vmware-avi-llm-agent/internal/config"
-	"vmware-avi-llm-agent/internal/llm"
+	"aviagent/internal/avi"
+	"aviagent/internal/config"
+	"aviagent/internal/llm"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
