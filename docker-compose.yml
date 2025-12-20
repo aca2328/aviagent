@@ -14,8 +14,14 @@ services:
       - AVI_USERNAME=${AVI_USERNAME:-admin}
       - AVI_PASSWORD=${AVI_PASSWORD:-password}
       
-      # Ollama Configuration
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      
+      # Ollama Configuration (used when LLM_PROVIDER=ollama)
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      
+      # Mistral AI Configuration (used when LLM_PROVIDER=mistral)
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
@@ -25,7 +31,9 @@ services:
     volumes:
       - ./config.yaml:/etc/aviagent/config.yaml:ro
     depends_on:
-      - ollama
+      ollama:
+        condition: service_healthy
+        required: false  # Only required when using Ollama
     networks:
       - avi-network
     restart: unless-stopped
@@ -36,7 +44,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # Ollama LLM Service
+  # Ollama LLM Service (only used when LLM_PROVIDER=ollama)
   ollama:
     image: ollama/ollama:latest
     ports:
@@ -48,6 +56,12 @@ services:
     networks:
       - avi-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
       interval: 30s

@@ -9,10 +9,12 @@ import (
 
 // Config holds the application configuration
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	Avi    AviConfig    `mapstructure:"avi"`
-	LLM    LLMConfig    `mapstructure:"llm"`
-	Log    LogConfig    `mapstructure:"log"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Avi       AviConfig       `mapstructure:"avi"`
+	LLM       LLMConfig       `mapstructure:"llm"`
+	Mistral   MistralConfig   `mapstructure:"mistral"`
+	Log       LogConfig       `mapstructure:"log"`
+	Provider  string          `mapstructure:"provider"` // "ollama" or "mistral"
 }
 
 // ServerConfig holds web server configuration
@@ -44,6 +46,17 @@ type LLMConfig struct {
 	MaxTokens     int      `mapstructure:"max_tokens"`
 }
 
+// MistralConfig holds Mistral AI configuration
+type MistralConfig struct {
+	APIBaseURL   string   `mapstructure:"api_base_url"`
+	APIKey       string   `mapstructure:"api_key"`
+	DefaultModel string   `mapstructure:"default_model"`
+	Models       []string `mapstructure:"models"`
+	Timeout      int      `mapstructure:"timeout"`
+	Temperature  float64  `mapstructure:"temperature"`
+	MaxTokens    int      `mapstructure:"max_tokens"`
+}
+
 // LogConfig holds logging configuration
 type LogConfig struct {
 	Level  string `mapstructure:"level"`
@@ -61,7 +74,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("avi.version", "31.2.1")
 	viper.SetDefault("avi.tenant", "admin")
 	viper.SetDefault("avi.timeout", 30)
-	viper.SetDefault("avi.insecure", true)
+	viper.SetDefault("avi.insecure", false) // Changed to false for security
 	
 	viper.SetDefault("llm.ollama_host", "http://localhost:11434")
 	viper.SetDefault("llm.default_model", "llama3.2")
@@ -69,6 +82,18 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("llm.timeout", 60)
 	viper.SetDefault("llm.temperature", 0.7)
 	viper.SetDefault("llm.max_tokens", 2048)
+
+	// Mistral AI configuration defaults
+	viper.SetDefault("mistral.api_base_url", "https://api.mistral.ai")
+	viper.SetDefault("mistral.api_key", "")
+	viper.SetDefault("mistral.default_model", "mistral-tiny")
+	viper.SetDefault("mistral.models", []string{"mistral-tiny", "mistral-small", "mistral-medium"})
+	viper.SetDefault("mistral.timeout", 60)
+	viper.SetDefault("mistral.temperature", 0.7)
+	viper.SetDefault("mistral.max_tokens", 2048)
+
+	// Default to Ollama for backward compatibility
+	viper.SetDefault("provider", "ollama")
 	
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
@@ -82,6 +107,8 @@ func Load(configPath string) (*Config, error) {
 	viper.BindEnv("avi.username", "AVI_USERNAME")
 	viper.BindEnv("avi.password", "AVI_PASSWORD")
 	viper.BindEnv("llm.ollama_host", "OLLAMA_HOST")
+	viper.BindEnv("mistral.api_key", "MISTRAL_API_KEY")
+	viper.BindEnv("provider", "LLM_PROVIDER")
 
 	// Load configuration file if it exists
 	if configPath != "" && fileExists(configPath) {
@@ -116,12 +143,29 @@ func validateConfig(cfg *Config) error {
 	if cfg.Avi.Password == "" {
 		return fmt.Errorf("avi.password is required")
 	}
-	if cfg.LLM.OllamaHost == "" {
-		return fmt.Errorf("llm.ollama_host is required")
+
+	// Validate based on provider
+	if cfg.Provider == "ollama" {
+		if cfg.LLM.OllamaHost == "" {
+			return fmt.Errorf("llm.ollama_host is required when using Ollama provider")
+		}
+		if len(cfg.LLM.Models) == 0 {
+			return fmt.Errorf("at least one LLM model must be configured for Ollama")
+		}
+	} else if cfg.Provider == "mistral" {
+		if cfg.Mistral.APIBaseURL == "" {
+			return fmt.Errorf("mistral.api_base_url is required when using Mistral provider")
+		}
+		if cfg.Mistral.APIKey == "" {
+			return fmt.Errorf("mistral.api_key is required when using Mistral provider")
+		}
+		if len(cfg.Mistral.Models) == 0 {
+			return fmt.Errorf("at least one Mistral model must be configured")
+		}
+	} else {
+		return fmt.Errorf("unsupported provider: %s. Use 'ollama' or 'mistral'", cfg.Provider)
 	}
-	if len(cfg.LLM.Models) == 0 {
-		return fmt.Errorf("at least one LLM model must be configured")
-	}
+
 	return nil
 }
 

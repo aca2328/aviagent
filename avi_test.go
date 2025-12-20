@@ -127,7 +127,7 @@ func TestClient_makeRequest(t *testing.T) {
 	assert.Equal(t, "test-session-id", client.session.SessionID)
 
 	// Test making a request
-	resp, err := client.makeRequest("GET", "/virtualservice", nil, nil)
+	resp, err := client.makeRequest(context.Background(), "GET", "/virtualservice", nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	resp.Body.Close()
@@ -212,13 +212,13 @@ func TestClient_ListVirtualServices(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test listing all virtual services
-	result, err := client.ListVirtualServices(nil)
+	result, err := client.ListVirtualServices(context.Background(), nil)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.Count)
 	assert.Len(t, result.Results, 2)
 
 	// Test listing with filter
-	result, err = client.ListVirtualServices(map[string]string{"name": "web-app-vs"})
+	result, err = client.ListVirtualServices(context.Background(), map[string]string{"name": "web-app-vs"})
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.Count)
 	assert.Len(t, result.Results, 1)
@@ -292,7 +292,7 @@ func TestClient_CreateVirtualService(t *testing.T) {
 		"enabled": true,
 	}
 
-	result, err := client.CreateVirtualService(vsData)
+	result, err := client.CreateVirtualService(context.Background(), vsData)
 	require.NoError(t, err)
 	assert.Equal(t, "new-vs-uuid", result["uuid"])
 	assert.Equal(t, "new-test-vs", result["name"])
@@ -368,6 +368,7 @@ func BenchmarkClient_ListVirtualServices(b *testing.B) {
 		httpClient: server.Client(),
 		baseURL:    server.URL + "/api",
 		logger:     logger,
+		cache:      newCache(30 * time.Second),
 		session: &Session{
 			SessionID: "test-session",
 			CSRFToken: "test-token",
@@ -377,7 +378,7 @@ func BenchmarkClient_ListVirtualServices(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := client.ListVirtualServices(nil)
+		_, err := client.ListVirtualServices(context.Background(), nil)
 		if err != nil {
 			b.Fatal(err)
 		}

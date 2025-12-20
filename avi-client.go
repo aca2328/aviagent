@@ -6,9 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"aviagent/internal/config"
@@ -23,6 +26,20 @@ type Client struct {
 	baseURL    string
 	logger     *zap.Logger
 	session    *Session
+	cache      *Cache
+}
+
+// Cache represents a simple in-memory cache
+type Cache struct {
+	store      map[string]cacheEntry
+	mu         sync.RWMutex
+	cacheTTL   time.Duration
+}
+
+// cacheEntry represents a cached API response
+type cacheEntry struct {
+	data      interface{}
+	expiresAt time.Time
 }
 
 // Session holds authentication session information
@@ -45,11 +62,20 @@ func NewClient(cfg *config.AviConfig, logger *zap.Logger) (*Client, error) {
 		return nil, fmt.Errorf("avi config cannot be nil")
 	}
 
-	// Create HTTP client with custom transport for SSL handling
+	// Create HTTP client with optimized transport for SSL handling
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: cfg.Insecure,
+			MinVersion:         tls.VersionTLS12, // Enforce minimum TLS version
 		},
+		MaxIdleConns:        100,              // Maximum number of idle connections
+		IdleConnTimeout:     90 * time.Second,  // Timeout for idle connections
+		TLSHandshakeTimeout: 10 * time.Second,  // Timeout for TLS handshake
+		ExpectContinueTimeout: 1 * time.Second, // Timeout for expect continue
+		DialContext: (&net.Dialer{              // Custom dialer with timeouts
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
 	}
 
 	httpClient := &http.Client{
@@ -62,6 +88,7 @@ func NewClient(cfg *config.AviConfig, logger *zap.Logger) (*Client, error) {
 		httpClient: httpClient,
 		baseURL:    fmt.Sprintf("https://%s/api", cfg.Host),
 		logger:     logger,
+		cache:      newCache(30 * time.Second), // 30 second cache TTL
 	}
 
 	// Authenticate and create session
@@ -70,6 +97,71 @@ func NewClient(cfg *config.AviConfig, logger *zap.Logger) (*Client, error) {
 	}
 
 	return client, nil
+}
+
+// newCache creates a new cache instance
+func newCache(ttl time.Duration) *Cache {
+	return &Cache{
+		store:    make(map[string]cacheEntry),
+		cacheTTL: ttl,
+	}
+}
+
+// getCacheKey generates a cache key from method, endpoint, and parameters
+func (c *Client) getCacheKey(method, endpoint string, params map[string]string) string {
+	// Sort parameters for consistent key generation
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build parameter string
+	paramStr := ""
+	for _, k := range keys {
+		paramStr += fmt.Sprintf("%s=%s&", k, params[k])
+	}
+
+	return fmt.Sprintf("%s:%s?%s", method, endpoint, paramStr)
+}
+
+// getFromCache retrieves data from cache if it exists and is not expired
+func (c *Client) getFromCache(key string) (interface{}, bool) {
+	if c.cache == nil {
+		return nil, false
+	}
+
+	c.cache.mu.RLock()
+	entry, ok := c.cache.store[key]
+	c.cache.mu.RUnlock()
+
+	if !ok {
+		return nil, false
+	}
+
+	// Check if cache entry is expired
+	if time.Now().After(entry.expiresAt) {
+		c.cache.mu.Lock()
+		delete(c.cache.store, key)
+		c.cache.mu.Unlock()
+		return nil, false
+	}
+
+	return entry.data, true
+}
+
+// setCache stores data in cache
+func (c *Client) setCache(key string, data interface{}) {
+	if c.cache == nil {
+		return
+	}
+
+	c.cache.mu.Lock()
+	c.cache.store[key] = cacheEntry{
+		data:      data,
+		expiresAt: time.Now().Add(c.cache.cacheTTL),
+	}
+	c.cache.mu.Unlock()
 }
 
 // authenticate performs authentication and creates a session
@@ -117,8 +209,8 @@ func (c *Client) authenticate() error {
 	return nil
 }
 
-// makeRequest performs an authenticated API request
-func (c *Client) makeRequest(method, endpoint string, body interface{}, params map[string]string) (*http.Response, error) {
+// makeRequest performs an authenticated API request with context support
+func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body interface{}, params map[string]string) (*http.Response, error) {
 	if c.session == nil {
 		return nil, fmt.Errorf("not authenticated")
 	}
@@ -142,7 +234,7 @@ func (c *Client) makeRequest(method, endpoint string, body interface{}, params m
 		requestURL += "?" + values.Encode()
 	}
 
-	req, err := http.NewRequest(method, requestURL, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -161,12 +253,36 @@ func (c *Client) makeRequest(method, endpoint string, body interface{}, params m
 		Value: c.session.SessionID,
 	})
 
-	return c.httpClient.Do(req)
+	c.logger.Debug("Making API request",
+		zap.String("method", method),
+		zap.String("endpoint", endpoint),
+		zap.Any("params", params),
+		zap.String("url", requestURL))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		c.logger.Error("API request failed",
+			zap.String("method", method),
+			zap.String("endpoint", endpoint),
+			zap.Error(err))
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+
+	return resp, nil
 }
 
 // ListVirtualServices retrieves all virtual services
-func (c *Client) ListVirtualServices(params map[string]string) (*APIResponse, error) {
-	resp, err := c.makeRequest("GET", "/virtualservice", nil, params)
+func (c *Client) ListVirtualServices(ctx context.Context, params map[string]string) (*APIResponse, error) {
+	// Generate cache key for this request
+	cacheKey := c.getCacheKey("GET", "/virtualservice", params)
+
+	// Try to get from cache first
+	if cached, ok := c.getFromCache(cacheKey); ok {
+		c.logger.Debug("Cache hit for virtual services", zap.String("key", cacheKey))
+		return cached.(*APIResponse), nil
+	}
+
+	resp, err := c.makeRequest(ctx, "GET", "/virtualservice", nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -182,13 +298,17 @@ func (c *Client) ListVirtualServices(params map[string]string) (*APIResponse, er
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	// Cache the result for future requests
+	c.setCache(cacheKey, &result)
+	c.logger.Debug("Cached virtual services response", zap.String("key", cacheKey))
+
 	return &result, nil
 }
 
 // GetVirtualService retrieves a specific virtual service by UUID
-func (c *Client) GetVirtualService(uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetVirtualService(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/virtualservice/%s", uuid)
-	resp, err := c.makeRequest("GET", endpoint, nil, params)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +328,8 @@ func (c *Client) GetVirtualService(uuid string, params map[string]string) (map[s
 }
 
 // CreateVirtualService creates a new virtual service
-func (c *Client) CreateVirtualService(vsData map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := c.makeRequest("POST", "/virtualservice", vsData, nil)
+func (c *Client) CreateVirtualService(ctx context.Context, vsData map[string]interface{}) (map[string]interface{}, error) {
+	resp, err := c.makeRequest(ctx, "POST", "/virtualservice", vsData, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -229,9 +349,9 @@ func (c *Client) CreateVirtualService(vsData map[string]interface{}) (map[string
 }
 
 // UpdateVirtualService updates an existing virtual service
-func (c *Client) UpdateVirtualService(uuid string, vsData map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) UpdateVirtualService(ctx context.Context, uuid string, vsData map[string]interface{}) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/virtualservice/%s", uuid)
-	resp, err := c.makeRequest("PUT", endpoint, vsData, nil)
+	resp, err := c.makeRequest(ctx, "PUT", endpoint, vsData, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -251,9 +371,9 @@ func (c *Client) UpdateVirtualService(uuid string, vsData map[string]interface{}
 }
 
 // DeleteVirtualService deletes a virtual service
-func (c *Client) DeleteVirtualService(uuid string) error {
+func (c *Client) DeleteVirtualService(ctx context.Context, uuid string) error {
 	endpoint := fmt.Sprintf("/virtualservice/%s", uuid)
-	resp, err := c.makeRequest("DELETE", endpoint, nil, nil)
+	resp, err := c.makeRequest(ctx, "DELETE", endpoint, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -268,8 +388,17 @@ func (c *Client) DeleteVirtualService(uuid string) error {
 }
 
 // ListPools retrieves all pools
-func (c *Client) ListPools(params map[string]string) (*APIResponse, error) {
-	resp, err := c.makeRequest("GET", "/pool", nil, params)
+func (c *Client) ListPools(ctx context.Context, params map[string]string) (*APIResponse, error) {
+	// Generate cache key for this request
+	cacheKey := c.getCacheKey("GET", "/pool", params)
+
+	// Try to get from cache first
+	if cached, ok := c.getFromCache(cacheKey); ok {
+		c.logger.Debug("Cache hit for pools", zap.String("key", cacheKey))
+		return cached.(*APIResponse), nil
+	}
+
+	resp, err := c.makeRequest(ctx, "GET", "/pool", nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -285,13 +414,17 @@ func (c *Client) ListPools(params map[string]string) (*APIResponse, error) {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	// Cache the result for future requests
+	c.setCache(cacheKey, &result)
+	c.logger.Debug("Cached pools response", zap.String("key", cacheKey))
+
 	return &result, nil
 }
 
 // GetPool retrieves a specific pool by UUID
-func (c *Client) GetPool(uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetPool(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/pool/%s", uuid)
-	resp, err := c.makeRequest("GET", endpoint, nil, params)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -311,8 +444,8 @@ func (c *Client) GetPool(uuid string, params map[string]string) (map[string]inte
 }
 
 // CreatePool creates a new pool
-func (c *Client) CreatePool(poolData map[string]interface{}) (map[string]interface{}, error) {
-	resp, err := c.makeRequest("POST", "/pool", poolData, nil)
+func (c *Client) CreatePool(ctx context.Context, poolData map[string]interface{}) (map[string]interface{}, error) {
+	resp, err := c.makeRequest(ctx, "POST", "/pool", poolData, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -332,9 +465,9 @@ func (c *Client) CreatePool(poolData map[string]interface{}) (map[string]interfa
 }
 
 // ScaleOutPool scales out a pool by adding servers
-func (c *Client) ScaleOutPool(uuid string, params map[string]interface{}) error {
+func (c *Client) ScaleOutPool(ctx context.Context, uuid string, params map[string]interface{}) error {
 	endpoint := fmt.Sprintf("/pool/%s/scaleout", uuid)
-	resp, err := c.makeRequest("POST", endpoint, params, nil)
+	resp, err := c.makeRequest(ctx, "POST", endpoint, params, nil)
 	if err != nil {
 		return err
 	}
@@ -349,9 +482,9 @@ func (c *Client) ScaleOutPool(uuid string, params map[string]interface{}) error 
 }
 
 // ScaleInPool scales in a pool by removing servers
-func (c *Client) ScaleInPool(uuid string, params map[string]interface{}) error {
+func (c *Client) ScaleInPool(ctx context.Context, uuid string, params map[string]interface{}) error {
 	endpoint := fmt.Sprintf("/pool/%s/scalein", uuid)
-	resp, err := c.makeRequest("POST", endpoint, params, nil)
+	resp, err := c.makeRequest(ctx, "POST", endpoint, params, nil)
 	if err != nil {
 		return err
 	}
@@ -366,8 +499,8 @@ func (c *Client) ScaleInPool(uuid string, params map[string]interface{}) error {
 }
 
 // ListHealthMonitors retrieves all health monitors
-func (c *Client) ListHealthMonitors(params map[string]string) (*APIResponse, error) {
-	resp, err := c.makeRequest("GET", "/healthmonitor", nil, params)
+func (c *Client) ListHealthMonitors(ctx context.Context, params map[string]string) (*APIResponse, error) {
+	resp, err := c.makeRequest(ctx, "GET", "/healthmonitor", nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -387,9 +520,9 @@ func (c *Client) ListHealthMonitors(params map[string]string) (*APIResponse, err
 }
 
 // GetHealthMonitor retrieves a specific health monitor by UUID
-func (c *Client) GetHealthMonitor(uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetHealthMonitor(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/healthmonitor/%s", uuid)
-	resp, err := c.makeRequest("GET", endpoint, nil, params)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -409,8 +542,8 @@ func (c *Client) GetHealthMonitor(uuid string, params map[string]string) (map[st
 }
 
 // ListServiceEngines retrieves all service engines
-func (c *Client) ListServiceEngines(params map[string]string) (*APIResponse, error) {
-	resp, err := c.makeRequest("GET", "/serviceengine", nil, params)
+func (c *Client) ListServiceEngines(ctx context.Context, params map[string]string) (*APIResponse, error) {
+	resp, err := c.makeRequest(ctx, "GET", "/serviceengine", nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -430,9 +563,9 @@ func (c *Client) ListServiceEngines(params map[string]string) (*APIResponse, err
 }
 
 // GetServiceEngine retrieves a specific service engine by UUID
-func (c *Client) GetServiceEngine(uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetServiceEngine(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/serviceengine/%s", uuid)
-	resp, err := c.makeRequest("GET", endpoint, nil, params)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -452,9 +585,9 @@ func (c *Client) GetServiceEngine(uuid string, params map[string]string) (map[st
 }
 
 // GetAnalytics retrieves analytics data for a specific resource
-func (c *Client) GetAnalytics(resourceType, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetAnalytics(ctx context.Context, resourceType, uuid string, params map[string]string) (map[string]interface{}, error) {
 	endpoint := fmt.Sprintf("/analytics/%s/%s", resourceType, uuid)
-	resp, err := c.makeRequest("GET", endpoint, nil, params)
+	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
 		return nil, err
 	}
@@ -474,13 +607,13 @@ func (c *Client) GetAnalytics(resourceType, uuid string, params map[string]strin
 }
 
 // ExecuteGenericOperation performs a generic API operation
-func (c *Client) ExecuteGenericOperation(method, endpoint string, body interface{}, params map[string]string) (interface{}, error) {
+func (c *Client) ExecuteGenericOperation(ctx context.Context, method, endpoint string, body interface{}, params map[string]string) (interface{}, error) {
 	// Ensure endpoint starts with /
 	if !strings.HasPrefix(endpoint, "/") {
 		endpoint = "/" + endpoint
 	}
 
-	resp, err := c.makeRequest(method, endpoint, body, params)
+	resp, err := c.makeRequest(ctx, method, endpoint, body, params)
 	if err != nil {
 		return nil, err
 	}

@@ -19,11 +19,12 @@ import (
 
 // Server represents the web server
 type Server struct {
-	config    *config.Config
-	logger    *zap.Logger
-	aviClient *avi.Client
-	llmClient *llm.Client
-	router    *gin.Engine
+	config        *config.Config
+	logger        *zap.Logger
+	aviClient     *avi.Client
+	llmClient      interface{} // Can be *llm.Client or *mistral.Client
+	mistralClient *mistral.Client
+	router        *gin.Engine
 }
 
 // ChatMessage represents a chat message for the web interface
@@ -52,17 +53,36 @@ func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
 		return nil, fmt.Errorf("failed to initialize Avi client: %w", err)
 	}
 
-	// Initialize LLM client
-	llmClient, err := llm.NewClient(&cfg.LLM, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize LLM client: %w", err)
+	// Initialize the appropriate LLM client based on provider
+	var llmClient interface{}
+	var mistralClient *mistral.Client
+
+	if cfg.Provider == "ollama" {
+		// Initialize Ollama client
+		ollamaClient, err := llm.NewClient(&cfg.LLM, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Ollama client: %w", err)
+		}
+		llmClient = ollamaClient
+		logger.Info("Initialized Ollama LLM client", zap.String("provider", "ollama"))
+	} else if cfg.Provider == "mistral" {
+		// Initialize Mistral AI client
+		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Mistral AI client: %w", err)
+		}
+		llmClient = mistralClient
+		logger.Info("Initialized Mistral AI client", zap.String("provider", "mistral"))
+	} else {
+		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
 	}
 
 	server := &Server{
-		config:    cfg,
-		logger:    logger,
-		aviClient: aviClient,
-		llmClient: llmClient,
+		config:        cfg,
+		logger:        logger,
+		aviClient:     aviClient,
+		llmClient:      llmClient,
+		mistralClient: mistralClient,
 	}
 
 	// Initialize router
@@ -236,13 +256,69 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 
 // processChatMessage processes a chat message and returns a response
 func (s *Server) processChatMessage(ctx context.Context, message, model string, history []llm.ChatMessage) (*llm.LLMResponse, error) {
-	// Get tool definitions
-	tools := llm.GetAviToolDefinitions()
+	// Convert history to the appropriate type based on provider
+	var convertedHistory interface{}
+	if s.config.Provider == "ollama" {
+		convertedHistory = history
+	} else if s.config.Provider == "mistral" {
+		// Convert llm.ChatMessage to mistral.ChatMessage
+		mistralHistory := make([]mistral.ChatMessage, len(history))
+		for i, msg := range history {
+			mistralHistory[i] = mistral.ChatMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			}
+		}
+		convertedHistory = mistralHistory
+	}
 
-	// Process the message with the LLM
-	llmResponse, err := s.llmClient.ProcessNaturalLanguageQuery(ctx, message, model, tools, history)
-	if err != nil {
-		return nil, fmt.Errorf("LLM processing failed: %w", err)
+	// Get tool definitions
+	var tools interface{}
+	if s.config.Provider == "ollama" {
+		tools = llm.GetAviToolDefinitions()
+	} else if s.config.Provider == "mistral" {
+		// Convert llm.Tool to mistral.Tool
+		ollamaTools := llm.GetAviToolDefinitions()
+		mistralTools := make([]mistral.Tool, len(ollamaTools))
+		for i, tool := range ollamaTools {
+			mistralTools[i] = mistral.Tool{
+				Type:     tool.Type,
+				Function: mistral.Function{
+					Name:        tool.Function.Name,
+					Description: tool.Function.Description,
+					Parameters:  tool.Function.Parameters,
+				},
+			}
+		}
+		tools = mistralTools
+	}
+
+	// Process the message with the appropriate LLM client
+	var llmResponse *llm.LLMResponse
+	var err error
+
+	if s.config.Provider == "ollama" {
+		// Use Ollama client
+		ollamaClient := s.llmClient.(*llm.Client)
+		var ollamaResp *llm.LLMResponse
+		ollamaResp, err = ollamaClient.ProcessNaturalLanguageQuery(ctx, message, model, tools.([]llm.Tool), convertedHistory.([]llm.ChatMessage))
+		if err != nil {
+			return nil, fmt.Errorf("Ollama LLM processing failed: %w", err)
+		}
+		llmResponse = ollamaResp
+	} else if s.config.Provider == "mistral" {
+		// Use Mistral AI client
+		mistralResp, err := s.mistralClient.ProcessNaturalLanguageQuery(ctx, message, model, tools.([]mistral.Tool), convertedHistory.([]mistral.ChatMessage))
+		if err != nil {
+			return nil, fmt.Errorf("Mistral AI processing failed: %w", err)
+		}
+		// Convert Mistral response to LLMResponse format
+		llmResponse = &llm.LLMResponse{
+			Message:   mistralResp.Message,
+			ToolCalls: mistralResp.ToolCalls,
+			Model:     mistralResp.Model,
+			Usage:     mistralResp.Usage,
+		}
 	}
 
 	// If there are tool calls, execute them
@@ -279,7 +355,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListVirtualServices(params)
+		return s.aviClient.ListVirtualServices(ctx, params)
 
 	case "get_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -290,10 +366,10 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetVirtualService(uuid, params)
+		return s.aviClient.GetVirtualService(ctx, uuid, params)
 
 	case "create_virtual_service":
-		return s.aviClient.CreateVirtualService(toolCall.Args)
+		return s.aviClient.CreateVirtualService(ctx, toolCall.Args)
 
 	case "update_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -301,14 +377,14 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the data
-		return s.aviClient.UpdateVirtualService(uuid, toolCall.Args)
+		return s.aviClient.UpdateVirtualService(ctx, uuid, toolCall.Args)
 
 	case "delete_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
 		if !ok {
 			return nil, fmt.Errorf("uuid parameter required")
 		}
-		return nil, s.aviClient.DeleteVirtualService(uuid)
+		return nil, s.aviClient.DeleteVirtualService(ctx, uuid)
 
 	case "list_pools":
 		params := make(map[string]string)
@@ -319,7 +395,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListPools(params)
+		return s.aviClient.ListPools(ctx, params)
 
 	case "get_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -330,10 +406,10 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetPool(uuid, params)
+		return s.aviClient.GetPool(ctx, uuid, params)
 
 	case "create_pool":
-		return s.aviClient.CreatePool(toolCall.Args)
+		return s.aviClient.CreatePool(ctx, toolCall.Args)
 
 	case "scale_out_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -341,7 +417,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the parameters
-		return nil, s.aviClient.ScaleOutPool(uuid, toolCall.Args)
+		return nil, s.aviClient.ScaleOutPool(ctx, uuid, toolCall.Args)
 
 	case "scale_in_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -349,7 +425,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the parameters
-		return nil, s.aviClient.ScaleInPool(uuid, toolCall.Args)
+		return nil, s.aviClient.ScaleInPool(ctx, uuid, toolCall.Args)
 
 	case "list_health_monitors":
 		params := make(map[string]string)
@@ -360,7 +436,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListHealthMonitors(params)
+		return s.aviClient.ListHealthMonitors(ctx, params)
 
 	case "get_health_monitor":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -371,7 +447,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetHealthMonitor(uuid, params)
+		return s.aviClient.GetHealthMonitor(ctx, uuid, params)
 
 	case "list_service_engines":
 		params := make(map[string]string)
@@ -382,7 +458,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListServiceEngines(params)
+		return s.aviClient.ListServiceEngines(ctx, params)
 
 	case "get_service_engine":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -393,7 +469,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetServiceEngine(uuid, params)
+		return s.aviClient.GetServiceEngine(ctx, uuid, params)
 
 	case "get_analytics":
 		resourceType, ok := toolCall.Args["resource_type"].(string)
@@ -411,7 +487,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if timeRange, ok := toolCall.Args["time_range"].(string); ok {
 			params["time_range"] = timeRange
 		}
-		return s.aviClient.GetAnalytics(resourceType, uuid, params)
+		return s.aviClient.GetAnalytics(ctx, resourceType, uuid, params)
 
 	case "execute_generic_operation":
 		method, ok := toolCall.Args["method"].(string)
@@ -437,7 +513,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			}
 		}
 
-		return s.aviClient.ExecuteGenericOperation(method, endpoint, body, params)
+		return s.aviClient.ExecuteGenericOperation(ctx, method, endpoint, body, params)
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolCall.Function.Name)
@@ -446,19 +522,43 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 
 // handleGetModels returns available models
 func (s *Server) handleGetModels(c *gin.Context) {
-	models := s.llmClient.GetAvailableModels()
+	var models []string
+	var defaultModel string
+
+	if s.config.Provider == "ollama" {
+		ollamaClient := s.llmClient.(*llm.Client)
+		models = ollamaClient.GetAvailableModels()
+		defaultModel = s.config.LLM.DefaultModel
+	} else if s.config.Provider == "mistral" {
+		models = s.mistralClient.GetAvailableModels()
+		defaultModel = s.config.Mistral.DefaultModel
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"models": models,
-		"default": s.config.LLM.DefaultModel,
+		"default": defaultModel,
+		"provider": s.config.Provider,
 	})
 }
 
 // handleHTMXModels returns models for HTMX
 func (s *Server) handleHTMXModels(c *gin.Context) {
-	models := s.llmClient.GetAvailableModels()
+	var models []string
+	var defaultModel string
+
+	if s.config.Provider == "ollama" {
+		ollamaClient := s.llmClient.(*llm.Client)
+		models = ollamaClient.GetAvailableModels()
+		defaultModel = s.config.LLM.DefaultModel
+	} else if s.config.Provider == "mistral" {
+		models = s.mistralClient.GetAvailableModels()
+		defaultModel = s.config.Mistral.DefaultModel
+	}
+
 	c.HTML(http.StatusOK, "models.html", gin.H{
 		"models": models,
-		"default": s.config.LLM.DefaultModel,
+		"default": defaultModel,
+		"provider": s.config.Provider,
 	})
 }
 
@@ -476,7 +576,16 @@ func (s *Server) handleValidateModel(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 
-	valid, err := s.llmClient.ValidateModel(ctx, request.Model)
+	var valid bool
+	var err error
+
+	if s.config.Provider == "ollama" {
+		ollamaClient := s.llmClient.(*llm.Client)
+		valid, err = ollamaClient.ValidateModel(ctx, request.Model)
+	} else if s.config.Provider == "mistral" {
+		valid, err = s.mistralClient.ValidateModel(ctx, request.Model)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -509,25 +618,36 @@ func (s *Server) handleHealth(c *gin.Context) {
 	status := gin.H{
 		"status": "healthy",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"provider": s.config.Provider,
 	}
 
 	// Check Avi connection
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	if _, err := s.aviClient.ListVirtualServices(map[string]string{"limit_by": "1"}); err != nil {
+	if _, err := s.aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "1"}); err != nil {
 		status["avi_status"] = "unhealthy"
 		status["avi_error"] = err.Error()
 	} else {
 		status["avi_status"] = "healthy"
 	}
 
-	// Check LLM connection
-	if _, err := s.llmClient.ListModels(ctx); err != nil {
-		status["llm_status"] = "unhealthy"
-		status["llm_error"] = err.Error()
-	} else {
-		status["llm_status"] = "healthy"
+	// Check LLM connection based on provider
+	if s.config.Provider == "ollama" {
+		ollamaClient := s.llmClient.(*llm.Client)
+		if _, err := ollamaClient.ListModels(ctx); err != nil {
+			status["llm_status"] = "unhealthy"
+			status["llm_error"] = err.Error()
+		} else {
+			status["llm_status"] = "healthy"
+		}
+	} else if s.config.Provider == "mistral" {
+		if _, err := s.mistralClient.ListModels(ctx); err != nil {
+			status["llm_status"] = "unhealthy"
+			status["llm_error"] = err.Error()
+		} else {
+			status["llm_status"] = "healthy"
+		}
 	}
 
 	c.JSON(http.StatusOK, status)
@@ -555,8 +675,8 @@ func (s *Server) handleAviProxy(c *gin.Context) {
 		}
 	}
 
-	// Execute the operation
-	result, err := s.aviClient.ExecuteGenericOperation(method, path, body, params)
+	// Execute the operation with context
+	result, err := s.aviClient.ExecuteGenericOperation(c.Request.Context(), method, path, body, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
