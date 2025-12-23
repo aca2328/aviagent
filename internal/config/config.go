@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -106,8 +107,34 @@ func Load(configPath string) (*Config, error) {
 	viper.BindEnv("avi.host", "AVI_HOST")
 	viper.BindEnv("avi.username", "AVI_USERNAME")
 	viper.BindEnv("avi.password", "AVI_PASSWORD")
+	viper.BindEnv("avi.version", "AVI_VERSION")
+	viper.BindEnv("avi.tenant", "AVI_TENANT")
+	viper.BindEnv("avi.timeout", "AVI_TIMEOUT")
+	viper.BindEnv("avi.insecure", "AVI_INSECURE")
+
 	viper.BindEnv("llm.ollama_host", "OLLAMA_HOST")
+	viper.BindEnv("llm.default_model", "OLLAMA_DEFAULT_MODEL")
+	viper.BindEnv("llm.models", "OLLAMA_MODELS")
+	viper.BindEnv("llm.timeout", "OLLAMA_TIMEOUT")
+	viper.BindEnv("llm.temperature", "OLLAMA_TEMPERATURE")
+	viper.BindEnv("llm.max_tokens", "OLLAMA_MAX_TOKENS")
+
+	viper.BindEnv("mistral.api_base_url", "MISTRAL_API_BASE_URL")
 	viper.BindEnv("mistral.api_key", "MISTRAL_API_KEY")
+	viper.BindEnv("mistral.default_model", "MISTRAL_DEFAULT_MODEL")
+	viper.BindEnv("mistral.models", "MISTRAL_MODELS")
+	viper.BindEnv("mistral.timeout", "MISTRAL_TIMEOUT")
+	viper.BindEnv("mistral.temperature", "MISTRAL_TEMPERATURE")
+	viper.BindEnv("mistral.max_tokens", "MISTRAL_MAX_TOKENS")
+
+	viper.BindEnv("server.port", "SERVER_PORT")
+	viper.BindEnv("server.read_timeout", "SERVER_READ_TIMEOUT")
+	viper.BindEnv("server.write_timeout", "SERVER_WRITE_TIMEOUT")
+	viper.BindEnv("server.idle_timeout", "SERVER_IDLE_TIMEOUT")
+
+	viper.BindEnv("log.level", "LOG_LEVEL")
+	viper.BindEnv("log.format", "LOG_FORMAT")
+
 	viper.BindEnv("provider", "LLM_PROVIDER")
 
 	// Load configuration file if it exists
@@ -122,6 +149,14 @@ func Load(configPath string) (*Config, error) {
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Handle comma-separated environment variables for models
+	if ollamaModels := viper.GetString("OLLAMA_MODELS"); ollamaModels != "" {
+		cfg.LLM.Models = parseCommaSeparated(ollamaModels)
+	}
+	if mistralModels := viper.GetString("MISTRAL_MODELS"); mistralModels != "" {
+		cfg.Mistral.Models = parseCommaSeparated(mistralModels)
 	}
 
 	// Validate required configuration
@@ -167,6 +202,21 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// parseCommaSeparated parses comma-separated string to slice
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	var result []string
+	for _, item := range strings.Split(s, ",") {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 // fileExists checks if a file exists

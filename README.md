@@ -29,10 +29,17 @@ A Go-based web agent that allows users to interact with the VMware Avi Load Bala
 
 ## 🚀 Quick Start
 
+**New!** We now provide convenient startup scripts to get you running quickly:
+
+- `start-mistral.sh` - For production setup with Mistral AI
+- `start-ollama.sh` - For development setup with Ollama
+
+These scripts guide you through the configuration process and start the application with the correct settings.
+
 ### 📋 Prerequisites
 - **Docker** (v20.10+) and **Docker Compose** (v1.29+)
 - Access to a **VMware Avi Load Balancer controller** (v21.1+ recommended)
-- **Ollama** service (local or remote) for LLM processing
+- **Mistral AI API Key** (for production) or **Ollama** service (for development)
 - Minimum **4GB RAM** and **2 CPU cores** for development
 
 ### 💻 System Requirements
@@ -53,15 +60,60 @@ cd aviagent
 git checkout v1.0.0
 ```
 
-### 2️⃣ Configure Environment
-Create a `.env` file with your configuration:
+### 2️⃣ Quick Start with Startup Scripts
+
+We provide convenient startup scripts to simplify the setup process:
+
+#### Option A: Start with Mistral AI (Production Recommended)
+```bash
+# Make the script executable
+chmod +x start-mistral.sh
+
+# Run the interactive setup
+./start-mistral.sh
+
+# Follow the prompts to enter your Mistral API key and Avi credentials
+```
+
+#### Option B: Start with Ollama (Development Recommended)
+```bash
+# Make the script executable
+chmod +x start-ollama.sh
+
+# Run the interactive setup
+./start-ollama.sh
+
+# Follow the prompts to enter your Avi credentials
+```
+
+The startup scripts will:
+- ✅ Check Docker and Docker Compose installation
+- ✅ Gather your configuration interactively
+- ✅ Create a proper `.env` file
+- ✅ Start the application with the correct provider
+- ✅ Provide access instructions
+
+**⚠️ Security Note:** The scripts create a `.env` file with sensitive credentials. Never commit this file to version control!
+
+### 3️⃣ Manual Configuration (Advanced)
+
+If you prefer manual configuration, create a `.env` file:
 ```bash
 cp .env.example .env
 nano .env
 ```
 
-Example `.env` file:
+Example `.env` file for **Mistral AI**:
 ```env
+# LLM Provider Configuration
+LLM_PROVIDER=mistral
+
+# Mistral AI Configuration
+MISTRAL_API_KEY=your-mistral-api-key
+MISTRAL_API_BASE_URL=https://api.mistral.ai
+MISTRAL_DEFAULT_MODEL=mistral-tiny
+MISTRAL_MODELS=mistral-tiny,mistral-small,mistral-medium
+
 # Avi Load Balancer Configuration
 AVI_HOST=avi-controller.example.com
 AVI_USERNAME=admin
@@ -69,29 +121,57 @@ AVI_PASSWORD=your-secure-password
 AVI_VERSION=31.2.1
 AVI_TENANT=admin
 
+# Application Configuration
+LOG_LEVEL=info
+SERVER_PORT=8080
+```
+
+Example `.env` file for **Ollama**:
+```env
+# LLM Provider Configuration
+LLM_PROVIDER=ollama
+
 # Ollama Configuration
 OLLAMA_HOST=http://localhost:11434
+OLLAMA_DEFAULT_MODEL=llama3.2
+OLLAMA_MODELS=llama3.2,mistral,codellama
+
+# Avi Load Balancer Configuration
+AVI_HOST=avi-controller.example.com
+AVI_USERNAME=admin
+AVI_PASSWORD=your-secure-password
+AVI_VERSION=31.2.1
+AVI_TENANT=admin
 
 # Application Configuration
 LOG_LEVEL=info
 SERVER_PORT=8080
-
-# Security Settings
-AVI_INSECURE=false  # Set to true only for testing with self-signed certs
 ```
 
-**⚠️ Security Note:** Never commit your `.env` file with sensitive credentials!
+### 4️⃣ Start Services
 
-### 3️⃣ Start Services
+#### With Mistral AI (no Ollama service):
 ```bash
-# Start core services (Avi Agent + Ollama)
-docker-compose up -d
+# Start with Mistral AI
+docker-compose --env-file .env up -d --scale ollama=0
+```
+
+#### With Ollama (includes Ollama service):
+```bash
+# Start with Ollama
+docker-compose --env-file .env up -d
 
 # Start with monitoring stack (Prometheus + Grafana)
 docker-compose --profile monitoring up -d
+```
 
+#### View service status:
+```bash
 # View service status
 docker-compose ps
+
+# Check application health
+curl http://localhost:8080/api/health
 ```
 
 ### 4️⃣ Pull LLM Models

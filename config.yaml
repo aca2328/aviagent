@@ -1,0 +1,44 @@
+# VMware Avi LLM Agent Configuration
+server:
+  port: 8080
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 60
+
+avi:
+  host: "avi-controller.example.com"
+  username: "admin"
+  password: "password"
+  version: "31.2.1"
+  tenant: "admin"
+  timeout: 30
+  insecure: false
+
+llm:
+  ollama_host: "http://localhost:11434"
+  default_model: "llama3.2"
+  models:
+    - "llama3.2"
+    - "mistral"
+    - "codellama"
+  timeout: 60
+  temperature: 0.7
+  max_tokens: 2048
+
+mistral:
+  api_base_url: "https://api.mistral.ai"
+  api_key: ""
+  default_model: "mistral-tiny"
+  models:
+    - "mistral-tiny"
+    - "mistral-small"
+    - "mistral-medium"
+  timeout: 60
+  temperature: 0.7
+  max_tokens: 2048
+
+log:
+  level: "info"
+  format: "json"
+
+provider: "ollama"

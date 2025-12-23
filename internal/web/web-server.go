@@ -12,6 +12,7 @@ import (
 	"aviagent/internal/avi"
 	"aviagent/internal/config"
 	"aviagent/internal/llm"
+	"aviagent/internal/mistral"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"

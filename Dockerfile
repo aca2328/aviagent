@@ -8,11 +8,11 @@ RUN apk add --no-cache git ca-certificates tzdata
 # Set working directory
 WORKDIR /app
 
-# Copy go mod and sum files
-COPY go.mod go.sum ./
+# Copy go mod file
+COPY go.mod ./
 
-# Download dependencies
-RUN go mod download
+# Initialize go.sum if it doesn't exist and download dependencies
+RUN if [ ! -f go.sum ]; then go mod tidy; fi && go mod download
 
 # Copy source code
 COPY . .
@@ -22,32 +22,21 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' \
     -a -installsuffix cgo \
     -o aviagent \
-    ./cmd/server
+    .
 
 # Stage 2: Runtime stage
-FROM scratch AS runtime
+FROM alpine:latest AS runtime
 
-# Copy ca-certificates from builder
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-# Copy timezone data
-COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
-
-# Copy the binary
-COPY --from=builder /app/aviagent /aviagent
-
-# Copy web assets
-COPY --from=builder /app/web /web
-
-# Create a non-root user (we need to use a regular Linux image for this)
-FROM alpine:latest AS final
-
-# Install ca-certificates and create user
-RUN apk add --no-cache ca-certificates tzdata \
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata wget bash \
     && addgroup -g 1000 appgroup \
     && adduser -D -s /bin/sh -u 1000 -G appgroup appuser
 
-# Copy binary from builder
+# Copy ca-certificates and timezone data from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+
+# Copy the binary
 COPY --from=builder /app/aviagent /usr/local/bin/aviagent
 
 # Copy web assets
@@ -55,10 +44,17 @@ COPY --from=builder /app/web /web
 
 # Set permissions
 RUN chmod +x /usr/local/bin/aviagent \
-    && chown -R appuser:appgroup /web
+    && chown -R appuser:appgroup /web \
+    && chown appuser:appgroup /usr/local/bin/aviagent
+
+# Create config directory
+RUN mkdir -p /etc/aviagent && chown appuser:appgroup /etc/aviagent
 
 # Switch to non-root user
 USER appuser
+
+# Set working directory
+WORKDIR /web
 
 # Expose port
 EXPOSE 8080
@@ -70,6 +66,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 # Set environment variables
 ENV GIN_MODE=release
 ENV TZ=UTC
+ENV CONFIG_DIR=/etc/aviagent
 
 # Run the binary
 ENTRYPOINT ["/usr/local/bin/aviagent"]
