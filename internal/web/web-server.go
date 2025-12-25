@@ -3,10 +3,8 @@ package web
 import (
 	"context"
 	"fmt"
-	"html/template"
+	"io"
 	"net/http"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"aviagent/internal/avi"
@@ -18,12 +16,45 @@ import (
 	"go.uber.org/zap"
 )
 
+// LLMClient interface defines the methods required for LLM clients
+type LLMClient interface {
+	GetAvailableModels() []string
+	ValidateModel(ctx context.Context, modelName string) (bool, error)
+}
+
+// convertMistralToolCalls converts Mistral ToolCalls to LLM ToolCalls
+func convertMistralToolCalls(mistralCalls []mistral.ToolCall) []llm.ToolCall {
+	llmCalls := make([]llm.ToolCall, len(mistralCalls))
+	for i, call := range mistralCalls {
+		llmCalls[i] = llm.ToolCall{
+			ID:       call.ID,
+			Type:     call.Type,
+			Function: llm.ToolCallFunction{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
+			},
+			Args: call.Args,
+		}
+	}
+	return llmCalls
+}
+
+// convertMistralUsage converts Mistral Usage to LLM Usage
+func convertMistralUsage(mistralUsage mistral.Usage) llm.Usage {
+	return llm.Usage{
+		PromptTokens:     mistralUsage.PromptTokens,
+		CompletionTokens: mistralUsage.CompletionTokens,
+		TotalTokens:      mistralUsage.TotalTokens,
+		Duration:         0, // Mistral doesn't provide duration
+	}
+}
+
 // Server represents the web server
 type Server struct {
 	config        *config.Config
 	logger        *zap.Logger
 	aviClient     *avi.Client
-	llmClient      interface{} // Can be *llm.Client or *mistral.Client
+	llmClient      LLMClient
 	mistralClient *mistral.Client
 	router        *gin.Engine
 }
@@ -55,7 +86,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
 	}
 
 	// Initialize the appropriate LLM client based on provider
-	var llmClient interface{}
+	var llmClient LLMClient
 	var mistralClient *mistral.Client
 
 	if cfg.Provider == "ollama" {
@@ -158,9 +189,9 @@ func (s *Server) Router() *gin.Engine {
 
 // handleIndex serves the main chat interface
 func (s *Server) handleIndex(c *gin.Context) {
-	models, err := s.llmClient.GetAvailableModels()
-	if err != nil {
-		s.logger.Error("Failed to get available models", zap.Error(err))
+	models := s.llmClient.GetAvailableModels()
+	if len(models) == 0 {
+		s.logger.Warn("No models available, using default model")
 		models = []string{s.config.LLM.DefaultModel}
 	}
 
@@ -316,9 +347,9 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 		// Convert Mistral response to LLMResponse format
 		llmResponse = &llm.LLMResponse{
 			Message:   mistralResp.Message,
-			ToolCalls: mistralResp.ToolCalls,
+			ToolCalls: convertMistralToolCalls(mistralResp.ToolCalls),
 			Model:     mistralResp.Model,
-			Usage:     mistralResp.Usage,
+			Usage:     convertMistralUsage(mistralResp.Usage),
 		}
 	}
 

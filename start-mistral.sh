@@ -119,6 +119,7 @@ echo
 
 # Start the application
 echo "🚀 Starting VMware Avi LLM Agent with Mistral AI..."
+echo "📝 Using Mistral AI cloud service (no local Ollama required)"
 echo
 docker-compose --env-file .env up -d --scale ollama=0
 

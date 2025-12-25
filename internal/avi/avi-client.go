@@ -44,10 +44,29 @@ type cacheEntry struct {
 }
 
 // Session holds authentication session information
+// Session represents the authentication session with Avi controller
 type Session struct {
-	SessionID string `json:"sessionid"`
-	CSRFToken string `json:"csrftoken"`
-	Version   string `json:"version"`
+	SessionID string      `json:"sessionid"`
+	CSRFToken string      `json:"csrftoken"`
+	Version   interface{} `json:"version"` // Can be string or object depending on Avi version
+}
+
+// GetVersionString extracts the version string from the Version field
+func (s *Session) GetVersionString() string {
+	switch v := s.Version.(type) {
+	case string:
+		return v
+	case map[string]interface{}:
+		if versionStr, ok := v["Version"].(string); ok {
+			return versionStr
+		}
+		if versionStr, ok := v["version"].(string); ok {
+			return versionStr
+		}
+		return "unknown"
+	default:
+		return fmt.Sprintf("%v", v)
+	}
 }
 
 // APIResponse represents a generic API response
@@ -205,7 +224,7 @@ func (c *Client) authenticate() error {
 	}
 
 	c.session = &session
-	c.logger.Info("Authentication successful", zap.String("version", session.Version))
+	c.logger.Info("Authentication successful", zap.String("version", session.GetVersionString()))
 
 	return nil
 }
