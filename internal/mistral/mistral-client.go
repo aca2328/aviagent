@@ -184,10 +184,18 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 		if bytesBuffer, ok := bodyReader.(*bytes.Buffer); ok {
 			bodyContent := bytesBuffer.Bytes()
 			c.logger.Info("HTTP Request Body Content",
-				zap.String("body_content", string(bodyContent)))
+				zap.String("body_content", string(bodyContent)),
+				zap.Int("body_length", len(bodyContent)))
+			
+			// Critical validation: ensure body is not empty
+			if len(bodyContent) == 0 {
+				c.logger.Error("CRITICAL: HTTP request body is empty for POST request!")
+			}
 		} else {
 			c.logger.Info("Request body is not a bytes.Buffer, cannot log content without consuming it")
 		}
+	} else if method == "POST" && bodyReader == nil {
+		c.logger.Error("CRITICAL: POST request has nil body reader!")
 	}
 
 	c.logger.Info("Making Mistral AI API request")
@@ -285,6 +293,18 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 	requestBody := bytes.NewBuffer(jsonData)
 	c.logger.Info("Request body prepared for HTTP call",
 		zap.Int("body_length", requestBody.Len()))
+
+	// Critical check: verify the request body is not empty
+	if requestBody.Len() == 0 {
+		c.logger.Error("CRITICAL: Request body is empty!",
+			zap.String("json_data_length", fmt.Sprintf("%d", len(jsonData))),
+			zap.String("json_data_content", string(jsonData)))
+		return nil, fmt.Errorf("request body is empty despite JSON being constructed")
+	}
+
+	// Log the exact content that will be sent
+	c.logger.Info("Final request body content",
+		zap.String("body_content", requestBody.String()))
 
 	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", requestBody)
 	if err != nil {
