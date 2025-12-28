@@ -178,6 +178,24 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 	c.logger.Info("Request Headers",
 		zap.Any("headers", req.Header))
 
+	// If this is a POST request with a body, log the body content
+	if method == "POST" && bodyReader != nil {
+		if seeker, ok := bodyReader.(io.Seekable); ok {
+			// Try to read the body content for logging
+			if _, err := seeker.Seek(0, io.SeekStart); err == nil {
+				bodyContent, readErr := io.ReadAll(seeker)
+				if readErr == nil {
+					c.logger.Info("HTTP Request Body Content",
+						zap.String("body_content", string(bodyContent)))
+					// Reset the reader position
+					seeker.Seek(0, io.SeekStart)
+				}
+			}
+		} else {
+			c.logger.Info("Request body is not seekable, cannot log content")
+		}
+	}
+
 	c.logger.Info("Making Mistral AI API request")
 
 	resp, err := c.httpClient.Do(req)
@@ -269,7 +287,12 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 		zap.String("json_length", fmt.Sprintf("%d", len(jsonData))),
 		zap.String("full_json", string(jsonData)))
 
-	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", bytes.NewBuffer(jsonData))
+	// Create request body and log it separately to ensure consistency
+	requestBody := bytes.NewBuffer(jsonData)
+	c.logger.Info("Request body prepared for HTTP call",
+		zap.Int("body_length", requestBody.Len()))
+
+	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", requestBody)
 	if err != nil {
 		return nil, err
 	}
