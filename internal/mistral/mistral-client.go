@@ -180,19 +180,13 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 
 	// If this is a POST request with a body, log the body content
 	if method == "POST" && bodyReader != nil {
-		if seeker, ok := bodyReader.(io.Seekable); ok {
-			// Try to read the body content for logging
-			if _, err := seeker.Seek(0, io.SeekStart); err == nil {
-				bodyContent, readErr := io.ReadAll(seeker)
-				if readErr == nil {
-					c.logger.Info("HTTP Request Body Content",
-						zap.String("body_content", string(bodyContent)))
-					// Reset the reader position
-					seeker.Seek(0, io.SeekStart)
-				}
-			}
+		// Try to read the body content for logging
+		if bytesBuffer, ok := bodyReader.(*bytes.Buffer); ok {
+			bodyContent := bytesBuffer.Bytes()
+			c.logger.Info("HTTP Request Body Content",
+				zap.String("body_content", string(bodyContent)))
 		} else {
-			c.logger.Info("Request body is not seekable, cannot log content")
+			c.logger.Info("Request body is not a bytes.Buffer, cannot log content without consuming it")
 		}
 	}
 
