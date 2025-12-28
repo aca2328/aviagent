@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -177,10 +178,20 @@ func (s *Server) setupRouter() {
 	})
 
 	// Load HTML templates
-	s.router.LoadHTMLGlob("web/templates/*")
+	// In Docker: working directory is /web, so templates are at templates/*
+	// In local dev: working directory is project root, so templates are at web/templates/*
+	templatePath := "templates/*"
+	if _, err := os.Stat("web/templates"); err == nil {
+		templatePath = "web/templates/*"
+	}
+	s.router.LoadHTMLGlob(templatePath)
 
 	// Serve static files
-	s.router.Static("/static", "web/static")
+	staticPath := "static"
+	if _, err := os.Stat("web/static"); err == nil {
+		staticPath = "web/static"
+	}
+	s.router.Static("/static", staticPath)
 
 	// Routes
 	s.setupRoutes()
