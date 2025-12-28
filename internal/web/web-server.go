@@ -53,11 +53,32 @@ func convertMistralUsage(mistralUsage mistral.Usage) llm.Usage {
 	}
 }
 
+// AviClientInterface defines the interface for Avi clients
+type AviClientInterface interface {
+	ListVirtualServices(ctx context.Context, params map[string]string) (interface{}, error)
+	GetVirtualService(ctx context.Context, uuid string, params map[string]string) (interface{}, error)
+	CreateVirtualService(ctx context.Context, data map[string]interface{}) (interface{}, error)
+	UpdateVirtualService(ctx context.Context, uuid string, data map[string]interface{}) (interface{}, error)
+	DeleteVirtualService(ctx context.Context, uuid string) error
+	ListPools(ctx context.Context, params map[string]string) (interface{}, error)
+	GetPool(ctx context.Context, uuid string, params map[string]string) (interface{}, error)
+	CreatePool(ctx context.Context, data map[string]interface{}) (interface{}, error)
+	ScaleOutPool(ctx context.Context, uuid string, params map[string]interface{}) error
+	ScaleInPool(ctx context.Context, uuid string, params map[string]interface{}) error
+	ListHealthMonitors(ctx context.Context, params map[string]string) (interface{}, error)
+	GetHealthMonitor(ctx context.Context, uuid string, params map[string]string) (interface{}, error)
+	ListServiceEngines(ctx context.Context, params map[string]string) (interface{}, error)
+	GetServiceEngine(ctx context.Context, uuid string, params map[string]string) (interface{}, error)
+	GetAnalytics(ctx context.Context, resourceType, uuid string, params map[string]string) (interface{}, error)
+	ExecuteGenericOperation(ctx context.Context, method, endpoint string, body interface{}, params map[string]string) (interface{}, error)
+	Close() error
+}
+
 // Server represents the web server
 type Server struct {
 	config        *config.Config
 	logger        *zap.Logger
-	aviClient     *avi.Client
+	aviClient     AviClientInterface
 	llmClient      LLMClient
 	mistralClient *mistral.Client
 	router        *gin.Engine
@@ -83,8 +104,8 @@ type ChatSession struct {
 
 // NewServer creates a new web server
 func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
-	// Initialize Avi client
-	aviClient, err := avi.NewClient(&cfg.Avi, logger)
+	// Initialize Avi client using official SDK
+	aviClient, err := avi.NewOfficialClient(&cfg.Avi, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Avi client: %w", err)
 	}

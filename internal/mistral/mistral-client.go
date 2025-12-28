@@ -401,6 +401,24 @@ func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error
 	}
 
 	choice := chatResp.Choices[0]
+	
+	// Debug logging for tool calls
+	c.logger.Info("Mistral API response analysis",
+		zap.Int("choice_count", len(chatResp.Choices)),
+		zap.String("message_content", choice.Message.Content),
+		zap.Int("message_content_length", len(choice.Message.Content)),
+		zap.Int("tool_calls_count", len(choice.ToolCalls)))
+	
+	if len(choice.ToolCalls) > 0 {
+		c.logger.Info("Tool calls detected in Mistral response")
+		for i, toolCall := range choice.ToolCalls {
+			c.logger.Info("Tool call details",
+				zap.Int("tool_call_index", i),
+				zap.String("function_name", toolCall.Function.Name),
+				zap.String("arguments", toolCall.Function.Arguments))
+		}
+	}
+
 	response := &LLMResponse{
 		Message: choice.Message.Content,
 		Model:   chatResp.Model,
@@ -410,6 +428,9 @@ func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error
 	// Extract tool calls if present
 	if len(choice.ToolCalls) > 0 {
 		response.ToolCalls = choice.ToolCalls
+		c.logger.Info("Successfully extracted tool calls", zap.Int("count", len(response.ToolCalls)))
+	} else {
+		c.logger.Info("No tool calls found in Mistral response")
 	}
 
 	return response, nil
