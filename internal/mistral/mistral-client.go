@@ -167,10 +167,18 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiKey))
 
-	c.logger.Debug("Making Mistral AI API request",
+	// Log complete HTTP request details
+	c.logger.Info("HTTP Request Details",
 		zap.String("method", method),
-		zap.String("endpoint", endpoint),
-		zap.String("url", requestURL))
+		zap.String("url", requestURL),
+		zap.String("content_type", req.Header.Get("Content-Type")),
+		zap.String("authorization", "Bearer ***REDACTED***"))
+
+	// Log request headers
+	c.logger.Info("Request Headers",
+		zap.Any("headers", req.Header))
+
+	c.logger.Info("Making Mistral AI API request")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -180,6 +188,11 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 			zap.Error(err))
 		return nil, fmt.Errorf("Mistral AI request failed: %w", err)
 	}
+
+	// Log response details
+	c.logger.Info("HTTP Response Received",
+		zap.Int("status_code", resp.StatusCode),
+		zap.String("status", resp.Status))
 
 	return resp, nil
 }
@@ -222,21 +235,39 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 		req.MaxTokens = c.config.MaxTokens
 	}
 
-	// Debug log the request being sent
-	c.logger.Debug("Mistral ChatCompletion request",
+	// Comprehensive debug logging for request analysis
+	c.logger.Info("=== MISTRAL API REQUEST START ===")
+	c.logger.Info("Mistral ChatCompletion request details",
 		zap.String("model", req.Model),
 		zap.Int("message_count", len(req.Messages)),
 		zap.Bool("has_tools", len(req.Tools) > 0),
 		zap.Float64("temperature", req.Temperature),
-		zap.Int("max_tokens", req.MaxTokens))
+		zap.Int("max_tokens", req.MaxTokens),
+		zap.String("stream_mode", fmt.Sprintf("%t", req.Stream)))
+
+	// Log each message individually for detailed analysis
+	for i, msg := range req.Messages {
+		c.logger.Info("Message analysis",
+			zap.Int("message_index", i),
+			zap.String("role", msg.Role),
+			zap.String("content_length", fmt.Sprintf("%d", len(msg.Content))),
+			zap.String("content_preview", fmt.Sprintf("%.50s...", msg.Content)))
+	}
+
+	// Log tools if present
+	if len(req.Tools) > 0 {
+		c.logger.Info("Tools included in request", zap.Int("tool_count", len(req.Tools)))
+	}
 
 	jsonData, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Log the actual JSON being sent for debugging
-	c.logger.Debug("Mistral request JSON", zap.String("json", string(jsonData)))
+	// Log the complete JSON payload
+	c.logger.Info("Complete Mistral API request payload",
+		zap.String("json_length", fmt.Sprintf("%d", len(jsonData))),
+		zap.String("full_json", string(jsonData)))
 
 	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -259,8 +290,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 
 // processNaturalLanguageQueryInternal processes a natural language query and returns tool calls (internal implementation)
 func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
+	c.logger.Info("=== MESSAGE CONSTRUCTION START ===")
+	
 	// Ensure conversation history is not nil
 	if conversationHistory == nil {
+		c.logger.Info("Nil conversation history detected, converting to empty slice")
 		conversationHistory = []ChatMessage{}
 	}
 
@@ -273,8 +307,16 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 		Content: c.buildSystemPrompt(),
 	}
 	messages = append(messages, systemMessage)
+	c.logger.Info("Added system message", zap.Int("system_content_length", len(systemMessage.Content)))
 
 	// Add conversation history
+	c.logger.Info("Adding conversation history", zap.Int("history_message_count", len(conversationHistory)))
+	for i, msg := range conversationHistory {
+		c.logger.Info("History message",
+			zap.Int("history_index", i),
+			zap.String("role", msg.Role),
+			zap.Int("content_length", len(msg.Content)))
+	}
 	messages = append(messages, conversationHistory...)
 
 	// Add current user query
@@ -283,17 +325,24 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 		Content: query,
 	}
 	messages = append(messages, userMessage)
+	c.logger.Info("Added user message", zap.String("user_query", query))
 
-	// Log the messages being sent for debugging
-	c.logger.Debug("Sending Mistral chat request",
-		zap.String("model", model),
-		zap.Int("message_count", len(messages)),
-		zap.Any("tools", tools))
+	// Validate message alternation pattern
+	c.logger.Info("Message alternation validation")
+	for i, msg := range messages {
+		c.logger.Info("Message validation",
+			zap.Int("message_index", i),
+			zap.String("role", msg.Role),
+			zap.Int("content_length", len(msg.Content)))
+	}
 
 	// Validate that we have at least the system and user messages
 	if len(messages) < 2 {
+		c.logger.Error("Invalid message construction", zap.Int("actual_message_count", len(messages)))
 		return nil, fmt.Errorf("invalid message construction: expected at least system and user messages, got %d", len(messages))
 	}
+	
+	c.logger.Info("Message construction completed successfully", zap.Int("total_messages", len(messages)))
 
 	// Create chat request
 	chatReq := ChatRequest{
@@ -424,20 +473,48 @@ func convertMistralUsage(mistralUsage Usage) llm.Usage {
 
 // ProcessNaturalLanguageQuery implements the LLMClient interface method
 func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools interface{}, conversationHistory interface{}) (*llm.LLMResponse, error) {
+	// Log method entry with parameter details
+	c.logger.Info("=== PROCESS NATURAL LANGUAGE QUERY START ===")
+	c.logger.Info("ProcessNaturalLanguageQuery called",
+		zap.String("query", query),
+		zap.String("model", model),
+		zap.String("tools_type", fmt.Sprintf("%T", tools)),
+		zap.String("history_type", fmt.Sprintf("%T", conversationHistory)))
+
 	// Convert interface{} parameters to Mistral types
 	mistralTools, ok1 := tools.([]Tool)
 	mistralHistory, ok2 := conversationHistory.([]ChatMessage)
 	
 	if !ok1 || !ok2 {
+		c.logger.Error("Type conversion failed",
+			zap.Bool("tools_conversion_ok", ok1),
+			zap.Bool("history_conversion_ok", ok2),
+			zap.String("tools_actual_type", fmt.Sprintf("%T", tools)),
+			zap.String("history_actual_type", fmt.Sprintf("%T", conversationHistory)))
 		return nil, fmt.Errorf("invalid parameter types for Mistral client")
 	}
-	
+
+	// Log conversation history details
+	c.logger.Info("Conversation history analysis",
+		zap.Int("history_length", len(mistralHistory)),
+		zap.Bool("history_is_nil", mistralHistory == nil))
+
+	// Log tools details
+	c.logger.Info("Tools analysis",
+		zap.Int("tools_length", len(mistralTools)))
+
 	// Call the actual Mistral implementation
 	mistralResp, err := c.processNaturalLanguageQueryInternal(ctx, query, model, mistralTools, mistralHistory)
 	if err != nil {
+		c.logger.Error("processNaturalLanguageQueryInternal failed", zap.Error(err))
 		return nil, err
 	}
-	
+
+	// Log successful response
+	c.logger.Info("ProcessNaturalLanguageQuery completed successfully",
+		zap.String("response_message", mistralResp.Message),
+		zap.Int("tool_calls_count", len(mistralResp.ToolCalls)))
+
 	// Convert Mistral response to LLMResponse format
 	return &llm.LLMResponse{
 		Message:   mistralResp.Message,
