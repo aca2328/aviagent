@@ -363,9 +363,16 @@ avi:
   tenant: "admin"
   timeout: 30
   insecure: false  # Set to true only for testing
+  auth_method: "session"  # "session" or "basic" - authentication method
 
 # LLM Provider Configuration (choose one)
 provider: "ollama"  # or "mistral"
+
+# Avi Authentication Configuration
+# auth_method: "session" - Session-based authentication (recommended)
+# auth_method: "basic"   - HTTP Basic Authentication
+# Session-based auth requires login endpoint and returns session cookies
+# Basic auth sends credentials with each request in Authorization header
 
 # Ollama Configuration (used when provider: "ollama")
 llm:

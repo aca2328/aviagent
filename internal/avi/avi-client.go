@@ -28,6 +28,7 @@ type Client struct {
 	logger     *zap.Logger
 	session    *Session
 	cache      *Cache
+	authMethod string // "session" or "basic"
 }
 
 // Cache represents a simple in-memory cache
@@ -103,12 +104,19 @@ func NewClient(cfg *config.AviConfig, logger *zap.Logger) (*Client, error) {
 		Timeout:   time.Duration(cfg.Timeout) * time.Second,
 	}
 
+	// Determine authentication method
+	authMethod := cfg.AuthMethod
+	if authMethod == "" {
+		authMethod = "session" // Default to session-based auth
+	}
+
 	client := &Client{
 		config:     cfg,
 		httpClient: httpClient,
 		baseURL:    fmt.Sprintf("https://%s/api", cfg.Host),
 		logger:     logger,
 		cache:      newCache(30 * time.Second), // 30 second cache TTL
+		authMethod: authMethod,
 	}
 
 	// Authenticate and create session
@@ -184,8 +192,17 @@ func (c *Client) setCache(key string, data interface{}) {
 	c.cache.mu.Unlock()
 }
 
-// authenticate performs authentication and creates a session
+// authenticate performs authentication using the configured method (session or basic)
 func (c *Client) authenticate() error {
+	if c.authMethod == "basic" {
+		return c.authenticateBasic()
+	}
+	// Default to session-based authentication
+	return c.authenticateSession()
+}
+
+// authenticateSession performs session-based authentication (recommended method)
+func (c *Client) authenticateSession() error {
 	loginURL := fmt.Sprintf("https://%s/login", c.config.Host)
 	
 	loginData := map[string]string{
@@ -224,8 +241,24 @@ func (c *Client) authenticate() error {
 	}
 
 	c.session = &session
-	c.logger.Info("Authentication successful", zap.String("version", session.GetVersionString()))
+	c.logger.Info("Session authentication successful", zap.String("version", session.GetVersionString()))
 
+	return nil
+}
+
+// authenticateBasic performs HTTP Basic Authentication
+func (c *Client) authenticateBasic() error {
+	c.logger.Info("Using Basic Authentication")
+	
+	// Basic auth doesn't require a separate login call
+	// We'll include credentials in each request via Authorization header
+	c.session = &Session{
+		SessionID: "basic-auth",
+		CSRFToken: "basic-auth",
+		Version:   "basic-auth",
+	}
+	
+	c.logger.Info("Basic authentication configured")
 	return nil
 }
 
@@ -267,17 +300,28 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 		req.Header.Set("X-CSRFToken", c.session.CSRFToken)
 	}
 
-	// Set session cookie
-	req.AddCookie(&http.Cookie{
-		Name:  "sessionid",
-		Value: c.session.SessionID,
-	})
+	// Set authentication headers based on auth method
+	if c.authMethod == "basic" {
+		// Basic authentication
+		req.SetBasicAuth(c.config.Username, c.config.Password)
+	} else {
+		// Session-based authentication
+		if c.session.CSRFToken != "" {
+			req.Header.Set("X-CSRFToken", c.session.CSRFToken)
+		}
+		// Set session cookie
+		req.AddCookie(&http.Cookie{
+			Name:  "sessionid",
+			Value: c.session.SessionID,
+		})
+	}
 
 	c.logger.Debug("Making API request",
 		zap.String("method", method),
 		zap.String("endpoint", endpoint),
 		zap.Any("params", params),
-		zap.String("url", requestURL))
+		zap.String("url", requestURL),
+		zap.String("auth_method", c.authMethod))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

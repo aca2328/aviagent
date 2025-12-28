@@ -28,13 +28,14 @@ type ServerConfig struct {
 
 // AviConfig holds VMware Avi Load Balancer configuration
 type AviConfig struct {
-	Host     string `mapstructure:"host"`
-	Username string `mapstructure:"username"`
-	Password string `mapstructure:"password"`
-	Version  string `mapstructure:"version"`
-	Tenant   string `mapstructure:"tenant"`
-	Timeout  int    `mapstructure:"timeout"`
-	Insecure bool   `mapstructure:"insecure"`
+	Host      string `mapstructure:"host"`
+	Username  string `mapstructure:"username"`
+	Password  string `mapstructure:"password"`
+	Version   string `mapstructure:"version"`
+	Tenant    string `mapstructure:"tenant"`
+	Timeout   int    `mapstructure:"timeout"`
+	Insecure  bool   `mapstructure:"insecure"`
+	AuthMethod string `mapstructure:"auth_method"` // "session" or "basic"
 }
 
 // LLMConfig holds Ollama LLM configuration
@@ -76,6 +77,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("avi.tenant", "admin")
 	viper.SetDefault("avi.timeout", 30)
 	viper.SetDefault("avi.insecure", false) // Changed to false for security
+	viper.SetDefault("avi.auth_method", "session") // Default to session-based auth
 	
 	viper.SetDefault("llm.ollama_host", "http://localhost:11434")
 	viper.SetDefault("llm.default_model", "llama3.2")
@@ -111,6 +113,7 @@ func Load(configPath string) (*Config, error) {
 	viper.BindEnv("avi.tenant", "AVI_TENANT")
 	viper.BindEnv("avi.timeout", "AVI_TIMEOUT")
 	viper.BindEnv("avi.insecure", "AVI_INSECURE")
+	viper.BindEnv("avi.auth_method", "AVI_AUTH_METHOD")
 
 	viper.BindEnv("llm.ollama_host", "OLLAMA_HOST")
 	viper.BindEnv("llm.default_model", "OLLAMA_DEFAULT_MODEL")

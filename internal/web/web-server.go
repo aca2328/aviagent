@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"fmt"
+	"html/template"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"aviagent/internal/avi"
@@ -139,8 +141,42 @@ func (s *Server) setupRouter() {
 	s.router.Use(gin.Recovery())
 	s.router.Use(s.corsMiddleware())
 
+	// Set up template functions
+	s.router.SetFuncMap(template.FuncMap{
+		"now": time.Now,
+		"split": strings.Split,
+		"hasPrefix": strings.HasPrefix,
+		"hasSuffix": strings.HasSuffix,
+		"substr": func(s string, start int, length int) string {
+			if start < 0 {
+				start = 0
+			}
+			if start >= len(s) {
+				return ""
+			}
+			end := start + length
+			if end > len(s) {
+				end = len(s)
+			}
+			return s[start:end]
+		},
+		"sub": func(s string, start int, length int) string {
+			if start < 0 {
+				start = 0
+			}
+			if start >= len(s) {
+				return ""
+			}
+			end := start + length
+			if end > len(s) {
+				end = len(s)
+			}
+			return s[start:end]
+		},
+	})
+
 	// Load HTML templates
-	s.router.LoadHTMLGlob("web/templates/*")
+	s.router.LoadHTMLGlob("templates/*")
 
 	// Serve static files
 	s.router.Static("/static", "web/static")
