@@ -306,6 +306,15 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 	c.logger.Info("Final request body content",
 		zap.String("body_content", requestBody.String()))
 
+	// Debug: Check if requestBody is actually a bytes.Buffer
+	if _, ok := requestBody.(*bytes.Buffer); !ok {
+		c.logger.Error("CRITICAL: requestBody is not a bytes.Buffer!",
+			zap.String("actual_type", fmt.Sprintf("%T", requestBody)))
+	} else {
+		c.logger.Info("requestBody is correctly a bytes.Buffer",
+			zap.Int("buffer_length", requestBody.Len()))
+	}
+
 	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", requestBody)
 	if err != nil {
 		return nil, err
