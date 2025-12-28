@@ -221,10 +221,21 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 		req.MaxTokens = c.config.MaxTokens
 	}
 
+	// Debug log the request being sent
+	c.logger.Debug("Mistral ChatCompletion request",
+		zap.String("model", req.Model),
+		zap.Int("message_count", len(req.Messages)),
+		zap.Bool("has_tools", len(req.Tools) > 0),
+		zap.Float64("temperature", req.Temperature),
+		zap.Int("max_tokens", req.MaxTokens))
+
 	jsonData, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
+
+	// Log the actual JSON being sent for debugging
+	c.logger.Debug("Mistral request JSON", zap.String("json", string(jsonData)))
 
 	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -247,6 +258,11 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 
 // ProcessNaturalLanguageQuery processes a natural language query and returns tool calls
 func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
+	// Ensure conversation history is not nil
+	if conversationHistory == nil {
+		conversationHistory = []ChatMessage{}
+	}
+
 	// Build messages including conversation history
 	messages := make([]ChatMessage, 0, len(conversationHistory)+2)
 
@@ -266,6 +282,17 @@ func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model s
 		Content: query,
 	}
 	messages = append(messages, userMessage)
+
+	// Log the messages being sent for debugging
+	c.logger.Debug("Sending Mistral chat request",
+		zap.String("model", model),
+		zap.Int("message_count", len(messages)),
+		zap.Any("tools", tools))
+
+	// Validate that we have at least the system and user messages
+	if len(messages) < 2 {
+		return nil, fmt.Errorf("invalid message construction: expected at least system and user messages, got %d", len(messages))
+	}
 
 	// Create chat request
 	chatReq := ChatRequest{

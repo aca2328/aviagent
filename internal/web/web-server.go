@@ -330,6 +330,9 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 		convertedHistory = history
 	} else if s.config.Provider == "mistral" {
 		// Convert llm.ChatMessage to mistral.ChatMessage
+		if history == nil {
+			history = []llm.ChatMessage{}
+		}
 		mistralHistory := make([]mistral.ChatMessage, len(history))
 		for i, msg := range history {
 			mistralHistory[i] = mistral.ChatMessage{
