@@ -189,8 +189,8 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 	return &chatResp, nil
 }
 
-// ProcessNaturalLanguageQuery processes a natural language query and returns tool calls
-func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
+// processNaturalLanguageQueryInternal processes a natural language query and returns tool calls (internal implementation)
+func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
 	// Build messages including conversation history
 	messages := make([]ChatMessage, 0, len(conversationHistory)+2)
 	
@@ -352,6 +352,20 @@ func (c *Client) ValidateModel(ctx context.Context, modelName string) (bool, err
 	}
 
 	return false, nil
+}
+
+// ProcessNaturalLanguageQueryInterface implements the LLMClient interface method
+func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools interface{}, conversationHistory interface{}) (*LLMResponse, error) {
+	// Convert interface{} parameters to Ollama types
+	ollamaTools, ok1 := tools.([]Tool)
+	ollamaHistory, ok2 := conversationHistory.([]ChatMessage)
+	
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("invalid parameter types for Ollama client")
+	}
+	
+	// Call the actual Ollama implementation
+	return c.processNaturalLanguageQueryInternal(ctx, query, model, ollamaTools, ollamaHistory)
 }
 
 // GetAvailableModels returns the list of configured available models

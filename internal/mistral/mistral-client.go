@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"aviagent/internal/config"
+	"aviagent/internal/llm"
 
 	"go.uber.org/zap"
 )
@@ -256,8 +257,8 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 	return &chatResp, nil
 }
 
-// ProcessNaturalLanguageQuery processes a natural language query and returns tool calls
-func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
+// processNaturalLanguageQueryInternal processes a natural language query and returns tool calls (internal implementation)
+func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
 	// Ensure conversation history is not nil
 	if conversationHistory == nil {
 		conversationHistory = []ChatMessage{}
@@ -394,6 +395,56 @@ func (c *Client) ValidateModel(ctx context.Context, modelName string) (bool, err
 	}
 
 	return false, nil
+}
+
+// convertMistralToolCalls converts Mistral ToolCalls to LLM ToolCalls
+func convertMistralToolCalls(mistralCalls []ToolCall) []llm.ToolCall {
+	llmCalls := make([]llm.ToolCall, len(mistralCalls))
+	for i, call := range mistralCalls {
+		llmCalls[i] = llm.ToolCall{
+			ID:       call.ID,
+			Type:     call.Type,
+			Function: llm.ToolCallFunction{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
+			},
+		}
+	}
+	return llmCalls
+}
+
+// convertMistralUsage converts Mistral Usage to LLM Usage
+func convertMistralUsage(mistralUsage Usage) llm.Usage {
+	return llm.Usage{
+		PromptTokens:     mistralUsage.PromptTokens,
+		CompletionTokens: mistralUsage.CompletionTokens,
+		TotalTokens:      mistralUsage.TotalTokens,
+	}
+}
+
+// ProcessNaturalLanguageQuery implements the LLMClient interface method
+func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools interface{}, conversationHistory interface{}) (*llm.LLMResponse, error) {
+	// Convert interface{} parameters to Mistral types
+	mistralTools, ok1 := tools.([]Tool)
+	mistralHistory, ok2 := conversationHistory.([]ChatMessage)
+	
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("invalid parameter types for Mistral client")
+	}
+	
+	// Call the actual Mistral implementation
+	mistralResp, err := c.processNaturalLanguageQueryInternal(ctx, query, model, mistralTools, mistralHistory)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert Mistral response to LLMResponse format
+	return &llm.LLMResponse{
+		Message:   mistralResp.Message,
+		ToolCalls: convertMistralToolCalls(mistralResp.ToolCalls),
+		Model:     mistralResp.Model,
+		Usage:     convertMistralUsage(mistralResp.Usage),
+	}, nil
 }
 
 // GetAvailableModels returns the list of configured available models

@@ -22,6 +22,7 @@ import (
 type LLMClient interface {
 	GetAvailableModels() []string
 	ValidateModel(ctx context.Context, modelName string) (bool, error)
+	ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools interface{}, conversationHistory interface{}) (*llm.LLMResponse, error)
 }
 
 // convertMistralToolCalls converts Mistral ToolCalls to LLM ToolCalls
@@ -365,31 +366,15 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	}
 
 	// Process the message with the appropriate LLM client
-	var llmResponse *llm.LLMResponse
 	var err error
-
-	if s.config.Provider == "ollama" {
-		// Use Ollama client
-		ollamaClient := s.llmClient.(*llm.Client)
-		var ollamaResp *llm.LLMResponse
-		ollamaResp, err = ollamaClient.ProcessNaturalLanguageQuery(ctx, message, model, tools.([]llm.Tool), convertedHistory.([]llm.ChatMessage))
-		if err != nil {
+	llmResponse, err := s.llmClient.ProcessNaturalLanguageQuery(ctx, message, model, tools, convertedHistory)
+	if err != nil {
+		if s.config.Provider == "ollama" {
 			return nil, fmt.Errorf("Ollama LLM processing failed: %w", err)
-		}
-		llmResponse = ollamaResp
-	} else if s.config.Provider == "mistral" {
-		// Use Mistral AI client
-		mistralResp, err := s.mistralClient.ProcessNaturalLanguageQuery(ctx, message, model, tools.([]mistral.Tool), convertedHistory.([]mistral.ChatMessage))
-		if err != nil {
+		} else if s.config.Provider == "mistral" {
 			return nil, fmt.Errorf("Mistral AI processing failed: %w", err)
 		}
-		// Convert Mistral response to LLMResponse format
-		llmResponse = &llm.LLMResponse{
-			Message:   mistralResp.Message,
-			ToolCalls: convertMistralToolCalls(mistralResp.ToolCalls),
-			Model:     mistralResp.Model,
-			Usage:     convertMistralUsage(mistralResp.Usage),
-		}
+		return nil, fmt.Errorf("LLM processing failed: %w", err)
 	}
 
 	// If there are tool calls, execute them
@@ -601,7 +586,7 @@ func (s *Server) handleGetModels(c *gin.Context) {
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
 	} else if s.config.Provider == "mistral" {
-		models = s.mistralClient.GetAvailableModels()
+		models = s.llmClient.GetAvailableModels()
 		defaultModel = s.config.Mistral.DefaultModel
 	}
 
@@ -622,7 +607,7 @@ func (s *Server) handleHTMXModels(c *gin.Context) {
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
 	} else if s.config.Provider == "mistral" {
-		models = s.mistralClient.GetAvailableModels()
+		models = s.llmClient.GetAvailableModels()
 		defaultModel = s.config.Mistral.DefaultModel
 	}
 
@@ -654,7 +639,7 @@ func (s *Server) handleValidateModel(c *gin.Context) {
 		ollamaClient := s.llmClient.(*llm.Client)
 		valid, err = ollamaClient.ValidateModel(ctx, request.Model)
 	} else if s.config.Provider == "mistral" {
-		valid, err = s.mistralClient.ValidateModel(ctx, request.Model)
+		valid, err = s.llmClient.ValidateModel(ctx, request.Model)
 	}
 
 	if err != nil {
