@@ -289,29 +289,8 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 		zap.String("json_length", fmt.Sprintf("%d", len(jsonData))),
 		zap.String("full_json", string(jsonData)))
 
-	// Create request body and log it separately to ensure consistency
-	requestBody := bytes.NewBuffer(jsonData)
-	c.logger.Info("Request body prepared for HTTP call",
-		zap.Int("body_length", requestBody.Len()))
-
-	// Critical check: verify the request body is not empty
-	if requestBody.Len() == 0 {
-		c.logger.Error("CRITICAL: Request body is empty!",
-			zap.String("json_data_length", fmt.Sprintf("%d", len(jsonData))),
-			zap.String("json_data_content", string(jsonData)))
-		return nil, fmt.Errorf("request body is empty despite JSON being constructed")
-	}
-
-	// Log the exact content that will be sent
-	c.logger.Info("Final request body content",
-		zap.String("body_content", requestBody.String()))
-
-	// Debug: Log requestBody details
-	c.logger.Info("Request body details",
-		zap.String("requestBody_type", fmt.Sprintf("%T", requestBody)),
-		zap.Int("requestBody_length", requestBody.Len()))
-
-	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", requestBody)
+	// Pass the request struct directly to makeRequest for proper marshaling
+	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", req)
 	if err != nil {
 		return nil, err
 	}

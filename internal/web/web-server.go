@@ -177,7 +177,7 @@ func (s *Server) setupRouter() {
 	})
 
 	// Load HTML templates
-	s.router.LoadHTMLGlob("templates/*")
+	s.router.LoadHTMLGlob("web/templates/*")
 
 	// Serve static files
 	s.router.Static("/static", "web/static")
