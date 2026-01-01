@@ -98,7 +98,7 @@ if [ -n "$HEALTH_RESPONSE" ]; then
     echo "💬 Testing chat endpoint..."
     CHAT_RESPONSE=$(curl -s -X POST http://localhost:$SERVER_PORT/api/chat \
         -H "Content-Type: application/json" \
-        -d '{"message": "What is the current time?", "model": "mistral-tiny"}')
+        -d '{"message": "What is the current time?", "model": "mistral-medium"}')
     
     if [ $? -eq 0 ]; then
         echo "✅ Chat endpoint responded:"

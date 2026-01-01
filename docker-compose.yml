@@ -30,7 +30,7 @@ services:
       # Mistral AI Configuration (used when LLM_PROVIDER=mistral)
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       - MISTRAL_API_BASE_URL=${MISTRAL_API_BASE_URL:-https://api.mistral.ai}
-      - MISTRAL_DEFAULT_MODEL=${MISTRAL_DEFAULT_MODEL:-mistral-tiny}
+      - MISTRAL_DEFAULT_MODEL=${MISTRAL_DEFAULT_MODEL:-mistral-medium}
       - MISTRAL_MODELS=${MISTRAL_MODELS:-mistral-tiny,mistral-small,mistral-medium}
       - MISTRAL_TIMEOUT=${MISTRAL_TIMEOUT:-60}
       - MISTRAL_TEMPERATURE=${MISTRAL_TEMPERATURE:-0.7}

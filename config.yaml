@@ -28,7 +28,7 @@ llm:
 mistral:
   api_base_url: "https://api.mistral.ai"
   api_key: ""
-  default_model: "mistral-tiny"
+  default_model: "mistral-medium"
   models:
     - "mistral-tiny"
     - "mistral-small"

@@ -111,7 +111,7 @@ LLM_PROVIDER=mistral
 # Mistral AI Configuration
 MISTRAL_API_KEY=your-mistral-api-key
 MISTRAL_API_BASE_URL=https://api.mistral.ai
-MISTRAL_DEFAULT_MODEL=mistral-tiny
+MISTRAL_DEFAULT_MODEL=mistral-medium
 MISTRAL_MODELS=mistral-tiny,mistral-small,mistral-medium
 
 # Avi Load Balancer Configuration
@@ -390,7 +390,7 @@ llm:
 mistral:
   api_base_url: "https://api.mistral.ai"
   api_key: "your-mistral-api-key"
-  default_model: "mistral-tiny"
+  default_model: "mistral-medium"
   models:
     - "mistral-tiny"
     - "mistral-small"
@@ -734,7 +734,7 @@ curl https://api.mistral.ai/v1/models \
 curl -X POST https://api.mistral.ai/v1/chat/completions \
   -H "Authorization: Bearer $MISTRAL_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model": "mistral-tiny", "messages": [{"role": "user", "content": "Hello"}]}'
+  -d '{"model": "mistral-medium", "messages": [{"role": "user", "content": "Hello"}]}'
 
 # Check rate limits
 curl https://api.mistral.ai/v1/usage \

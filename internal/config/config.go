@@ -89,7 +89,7 @@ func Load(configPath string) (*Config, error) {
 	// Mistral AI configuration defaults
 	viper.SetDefault("mistral.api_base_url", "https://api.mistral.ai")
 	viper.SetDefault("mistral.api_key", "")
-	viper.SetDefault("mistral.default_model", "mistral-tiny")
+	viper.SetDefault("mistral.default_model", "mistral-medium")
 	viper.SetDefault("mistral.models", []string{"mistral-tiny", "mistral-small", "mistral-medium"})
 	viper.SetDefault("mistral.timeout", 60)
 	viper.SetDefault("mistral.temperature", 0.7)
