@@ -64,13 +64,38 @@ function saveDarkModePreference(isDarkMode) {
     localStorage.setItem('darkModePreference', preference);
 }
 
+// Function to display version information
+function displayVersionInfo() {
+    fetch('/api/health')
+        .then(response => response.json())
+        .then(data => {
+            if (data.version) {
+                document.getElementById('app-version').textContent = data.version;
+            }
+            if (data.build_date) {
+                document.getElementById('build-date').textContent = data.build_date;
+            }
+        })
+        .catch(error => {
+            console.warn('Failed to fetch version info:', error);
+        });
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize dark mode toggle
     initializeDarkModeToggle();
     
-    // Auto-focus on message input
+    // Display version information
+    displayVersionInfo();
+    
+    // Get DOM elements once
     const messageInput = document.getElementById('message-input');
+    const chatForm = document.getElementById('chat-form');
+    const clearChatButton = document.getElementById('clear-chat');
+    const exportChatButton = document.getElementById('export-chat');
+    
+    // Auto-focus on message input
     if (messageInput) {
         messageInput.focus();
     }
@@ -80,7 +105,6 @@ document.addEventListener('DOMContentLoaded', function() {
         element.addEventListener('click', function(e) {
             e.preventDefault();
             const query = this.getAttribute('data-query');
-            const messageInput = document.getElementById('message-input');
             if (messageInput) {
                 messageInput.value = query;
             }
@@ -110,12 +134,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Handle form submission
-    const chatForm = document.getElementById('chat-form');
     if (chatForm) {
         chatForm.addEventListener('htmx:afterRequest', function(event) {
             // Clear the input after successful submission
             if (event.detail.successful) {
-                const messageInput = document.getElementById('message-input');
                 if (messageInput) {
                     messageInput.value = '';
                 }
@@ -127,7 +149,6 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             
             // Re-focus on input
-            const messageInput = document.getElementById('message-input');
             if (messageInput) {
                 messageInput.focus();
             }
@@ -135,12 +156,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Handle Enter key in input
-    const messageInput = document.getElementById('message-input');
     if (messageInput) {
         messageInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                const chatForm = document.getElementById('chat-form');
                 if (chatForm) {
                     chatForm.dispatchEvent(new Event('submit'));
                 }

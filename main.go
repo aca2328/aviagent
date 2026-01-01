@@ -17,6 +17,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// Application version
+const (
+	AppName    = "VMware Avi LLM Agent"
+	AppVersion = "1.0.0"
+	BuildDate  = "2026-01-01"
+)
+
 func main() {
 	// Parse command line flags
 	var configPath string

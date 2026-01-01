@@ -863,6 +863,21 @@ body, html {
     right: var(--space-24);
 }
 
+/* Version Info */
+.version-info {
+    position: absolute;
+    bottom: var(--space-4);
+    left: var(--space-24);
+    right: var(--space-24);
+    font-size: var(--font-size-xs);
+    text-align: center;
+}
+
+.version-info small {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+}
+
 .status-dot {
     width: var(--space-8);
     height: var(--space-8);

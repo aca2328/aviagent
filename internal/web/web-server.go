@@ -707,6 +707,9 @@ func (s *Server) handleHealth(c *gin.Context) {
 		"status": "healthy",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"provider": s.config.Provider,
+		"version": "1.0.0",
+		"build_date": "2026-01-01",
+		"app_name": "VMware Avi LLM Agent",
 	}
 
 	// Check Avi connection
