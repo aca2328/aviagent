@@ -1280,6 +1280,51 @@ body, html {
     outline: none;
 }
 
+/* Dark Mode Toggle Button */
+#dark-mode-toggle {
+    position: relative;
+    transition: all var(--duration-fast) var(--ease-standard);
+}
+
+#dark-mode-toggle.dark-mode-active {
+    background-color: var(--color-primary);
+    color: var(--color-btn-primary-text);
+    border-color: var(--color-primary);
+}
+
+#dark-mode-toggle.dark-mode-active:hover {
+    background-color: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+}
+
+#dark-mode-toggle.dark-mode-active i {
+    transform: rotate(360deg);
+}
+
+#dark-mode-toggle i {
+    transition: transform var(--duration-fast) var(--ease-standard);
+}
+
+/* Dark mode indicator for the toggle */
+#dark-mode-toggle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-full);
+    background-color: var(--color-text);
+    opacity: 0;
+    transition: opacity var(--duration-fast) var(--ease-standard);
+}
+
+#dark-mode-toggle.dark-mode-active::after {
+    opacity: 1;
+    background-color: var(--color-btn-primary-text);
+}
+
 /* Badge Styles */
 .badge {
     font-size: var(--font-size-xs);

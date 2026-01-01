@@ -44,12 +44,13 @@ type Function struct {
 
 // ChatRequest represents a chat completion request for Mistral AI
 type ChatRequest struct {
-	Model     string        `json:"model"`
-	Messages  []ChatMessage `json:"messages"`
-	Tools     []Tool        `json:"tools,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model      string        `json:"model"`
+	Messages   []ChatMessage `json:"messages"`
+	Tools      []Tool        `json:"tools,omitempty"`
+	ToolChoice interface{}   `json:"tool_choice,omitempty"`
+	Stream     bool          `json:"stream,omitempty"`
 	Temperature float64     `json:"temperature,omitempty"`
-	MaxTokens int           `json:"max_tokens,omitempty"`
+	MaxTokens  int           `json:"max_tokens,omitempty"`
 }
 
 // ChatResponse represents a chat completion response from Mistral AI
@@ -370,6 +371,7 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 		Model:       model,
 		Messages:    messages,
 		Tools:       tools,
+		ToolChoice:  "auto", // Enable automatic tool selection
 		Stream:      false,
 		Temperature: c.config.Temperature,
 		MaxTokens:   c.config.MaxTokens,
@@ -438,38 +440,13 @@ func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error
 
 // buildSystemPrompt creates the system prompt for the LLM
 func (c *Client) buildSystemPrompt() string {
-	return `You are an intelligent assistant for VMware Avi Load Balancer management using Mistral AI. Your role is to help users interact with the Avi Load Balancer API using natural language queries.
+	return `You are an AI assistant specialized in VMware Avi Load Balancer management. You can help users by providing information about Avi Load Balancer features, configuration, and best practices. You also have access to tools that allow you to interact with the Avi Load Balancer API to perform management tasks.
 
-When users ask questions about Avi Load Balancer, you should:
+When a user asks you to perform an action that requires API access (like listing virtual services, creating pools, etc.), you can use the appropriate tool. The tools will provide the actual data from the Avi Load Balancer system.
 
-1. Understand their intent and map it to appropriate API operations
-2. Call the relevant API functions with the correct parameters
-3. Present the results in a user-friendly format
-4. Provide context and explanations for the data returned
+If you can perform the action directly, provide the information. If you need to use a tool, you can call the appropriate function.
 
-You have access to the following types of operations:
-- Virtual Service management (list, create, update, delete, scale)
-- Pool management (list, create, update, scale out/in)
-- Health Monitor management (list, create, update)
-- Service Engine management (list, status, metrics)
-- Analytics and monitoring data retrieval
-
-When you need to perform an API operation, respond with a JSON object containing:
-{
-  "tool": "function_name",
-  "parameters": {
-    "param1": "value1",
-    "param2": "value2"
-  }
-}
-
-Always provide clear, helpful responses and ask for clarification if the user's request is ambiguous.
-
-Examples:
-- "List all virtual services" → {"tool": "list_virtual_services", "parameters": {}}
-- "Show me pools with health issues" → {"tool": "list_pools", "parameters": {"health_status": "down"}}
-- "Create a new pool with servers 10.1.1.10 and 10.1.1.11" → {"tool": "create_pool", "parameters": {"name": "new_pool", "servers": [{"ip": {"addr": "10.1.1.10", "type": "V4"}}, {"ip": {"addr": "10.1.1.11", "type": "V4"}}]}}
-`
+Always be helpful, clear, and provide context for your responses.`
 }
 
 // ValidateModel checks if the specified model is available
