@@ -12,7 +12,7 @@ func GetAviToolDefinitions() []Tool {
 			Type: "function",
 			Function: Function{
 				Name:        "list_virtual_services",
-				Description: "List all virtual services with optional filtering. Use this when users ask to see, list, or get information about virtual services.",
+				Description: "List all virtual services with optional filtering. USE THIS TOOL FOR ANY REQUEST ABOUT VIRTUAL SERVICES INCLUDING: 'show virtual services', 'list virtual services', 'display virtual services', 'what virtual services exist', 'virtual service configuration', 'load balancer services', 'VS status', 'virtual service health'. ALWAYS use this tool when users ask for current virtual service information or status.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -162,7 +162,7 @@ func GetAviToolDefinitions() []Tool {
 			Type: "function",
 			Function: Function{
 				Name:        "list_pools",
-				Description: "List all pools with optional filtering. Use this when users ask about backend pools, server pools, or load balancing pools.",
+				Description: "List all pools with optional filtering. USE THIS TOOL FOR ANY REQUEST ABOUT POOLS INCLUDING: 'show pools', 'list pools', 'display pools', 'what pools exist', 'pools with health status', 'pool configuration', 'backend pools', 'server pools', 'load balancing pools', 'pool health', 'pool status'. ALWAYS use this tool when users ask for current pool information or health status.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
@@ -190,7 +190,7 @@ func GetAviToolDefinitions() []Tool {
 			Type: "function",
 			Function: Function{
 				Name:        "get_pool",
-				Description: "Get details of a specific pool by UUID. Use this for detailed pool information including servers and health status.",
+				Description: "Get details of a specific pool by UUID. USE THIS TOOL FOR REQUESTS LIKE: 'get pool details', 'show pool XYZ', 'pool information for UUID', 'detailed pool status', 'pool server list', 'pool health details'. ALWAYS use this tool when users ask for specific pool details by name or UUID.",
 				Parameters: map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
