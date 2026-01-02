@@ -116,7 +116,6 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(checkConnectionStatus, 30000); // Check every 30 seconds
     
     // Clear chat functionality
-    const clearChatButton = document.getElementById('clear-chat');
     if (clearChatButton) {
         clearChatButton.addEventListener('click', function() {
             if (confirm('Are you sure you want to clear the chat?')) {
@@ -168,7 +167,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // Export chat functionality
-    const exportChatButton = document.getElementById('export-chat');
     if (exportChatButton) {
         exportChatButton.addEventListener('click', function() {
             const chatMessages = document.getElementById('chat-messages');

@@ -156,11 +156,17 @@ func (s *Server) setupRouter() {
 	} else {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	
+	// Debug: Log the actual Gin mode that was set
+	s.logger.Info("Gin mode set", zap.String("mode", gin.Mode()))
 
 	s.router = gin.New()
 
 	// Add middleware
-	s.router.Use(gin.Logger())
+	// Only use Gin logger in debug mode, otherwise use our own logging
+	if gin.Mode() == gin.DebugMode {
+		s.router.Use(gin.Logger())
+	}
 	s.router.Use(gin.Recovery())
 	s.router.Use(s.corsMiddleware())
 
@@ -712,33 +718,50 @@ func (s *Server) handleHealth(c *gin.Context) {
 		"app_name": "VMware Avi LLM Agent",
 	}
 
-	// Check Avi connection
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	// Check Avi connection with a very short timeout to avoid blocking
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second) // Reduced from 5s to 2s
 	defer cancel()
 
-	if _, err := s.aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "1"}); err != nil {
-		status["avi_status"] = "unhealthy"
-		status["avi_error"] = err.Error()
+	// Only check Avi connection if we're not in a health check storm
+	// Add a simple check to see if this is a frequent health check
+	if c.Request.Header.Get("User-Agent") != "kube-probe/1.27" && 
+	   c.Request.Header.Get("User-Agent") != "GoogleHC/1.0" {
+		
+		if _, err := s.aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "1"}); err != nil {
+			status["avi_status"] = "unhealthy"
+			status["avi_error"] = err.Error()
+		} else {
+			status["avi_status"] = "healthy"
+		}
 	} else {
-		status["avi_status"] = "healthy"
+		// For known health check probes, skip Avi check to reduce load
+		status["avi_status"] = "skipped"
 	}
 
-	// Check LLM connection based on provider
-	if s.config.Provider == "ollama" {
-		ollamaClient := s.llmClient.(*llm.Client)
-		if _, err := ollamaClient.ListModels(ctx); err != nil {
-			status["llm_status"] = "unhealthy"
-			status["llm_error"] = err.Error()
-		} else {
-			status["llm_status"] = "healthy"
+	// Check LLM connection based on provider, but only if it's not a frequent health check
+	if c.Request.Header.Get("User-Agent") != "kube-probe/1.27" && 
+	   c.Request.Header.Get("User-Agent") != "GoogleHC/1.0" {
+		
+		if s.config.Provider == "ollama" {
+			ollamaClient := s.llmClient.(*llm.Client)
+			if _, err := ollamaClient.ListModels(ctx); err != nil {
+				status["llm_status"] = "unhealthy"
+				status["llm_error"] = err.Error()
+			} else {
+				status["llm_status"] = "healthy"
+			}
+		} else if s.config.Provider == "mistral" {
+			// For Mistral, we can skip the actual API call and just check if we have a client
+			if s.mistralClient != nil {
+				status["llm_status"] = "healthy"
+			} else {
+				status["llm_status"] = "unhealthy"
+				status["llm_error"] = "Mistral client not initialized"
+			}
 		}
-	} else if s.config.Provider == "mistral" {
-		if _, err := s.mistralClient.ListModels(ctx); err != nil {
-			status["llm_status"] = "unhealthy"
-			status["llm_error"] = err.Error()
-		} else {
-			status["llm_status"] = "healthy"
-		}
+	} else {
+		// For known health check probes, skip LLM check to reduce API calls
+		status["llm_status"] = "skipped"
 	}
 
 	c.JSON(http.StatusOK, status)
