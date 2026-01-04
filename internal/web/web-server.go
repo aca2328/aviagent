@@ -435,7 +435,13 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	message := c.PostForm("message")
 	model := c.PostForm("model")
 
+	s.logger.Info("HTMX Chat request received",
+		zap.String("message", message),
+		zap.String("model", model),
+		zap.String("user_agent", c.Request.UserAgent()))
+
 	if message == "" {
+		s.logger.Warn("Empty message received in HTMX chat request")
 		c.HTML(http.StatusBadRequest, "chat.html", gin.H{
 			"error": "Message cannot be empty",
 		})
@@ -444,7 +450,12 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 
 	if model == "" {
 		model = s.config.LLM.DefaultModel
+		s.logger.Info("Using default model", zap.String("model", model))
 	}
+
+	s.logger.Info("Processing HTMX chat message",
+		zap.String("message", message),
+		zap.String("model", model))
 
 	// Process the chat message
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
@@ -460,13 +471,25 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	}
 
 	// Render the response as HTML
+	s.logger.Info("HTMX response ready",
+		zap.String("message", message),
+		zap.Int("tool_calls", len(response.ToolCalls)),
+		zap.Int("response_length", len(response.Message)))
+	
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
 		"assistantMessage": response.Message,
 		"model":           response.Model,
 		"toolCalls":       response.ToolCalls,
+		"hasToolCalls":    len(response.ToolCalls) > 0,
 		"timestamp":       time.Now().Format("15:04:05"),
+		"showDebug":       true,
 	})
+	
+	s.logger.Info("HTMX chat completed successfully",
+		zap.String("message", message),
+		zap.Int("response_length", len(response.Message)),
+		zap.Int("tool_calls", len(response.ToolCalls)))
 }
 
 // processChatMessage processes a chat message and returns a response
@@ -525,9 +548,22 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 	// If there are tool calls, execute them
 	if len(llmResponse.ToolCalls) > 0 {
-		for _, toolCall := range llmResponse.ToolCalls {
+		s.logger.Info("Executing tool calls",
+			zap.Int("tool_call_count", len(llmResponse.ToolCalls)))
+		
+		var toolResults []string
+		var toolErrors []string
+		
+		for i, toolCall := range llmResponse.ToolCalls {
+			s.logger.Info("Executing tool call",
+				zap.Int("tool_call_index", i),
+				zap.String("tool_name", toolCall.Function.Name),
+				zap.String("arguments", toolCall.Function.Arguments))
+			
 			result, err := s.executeToolCall(ctx, toolCall)
 			if err != nil {
+				errorMsg := fmt.Sprintf("Tool call failed: %s - Error: %v", toolCall.Function.Name, err)
+				toolErrors = append(toolErrors, errorMsg)
 				s.logger.Error("Tool call failed", 
 					zap.String("tool", toolCall.Function.Name),
 					zap.Error(err))
@@ -537,7 +573,26 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 			// Add the result to the response message
 			if result != nil {
+				resultStr := fmt.Sprintf("Tool call result: %s - Success", toolCall.Function.Name)
+				toolResults = append(toolResults, resultStr)
 				llmResponse.Message += fmt.Sprintf("\n\nAPI Result:\n```json\n%v\n```", result)
+				s.logger.Info("Tool call succeeded",
+					zap.String("tool", toolCall.Function.Name),
+					zap.Any("result", result))
+			} else {
+				s.logger.Warn("Tool call returned empty result",
+					zap.String("tool", toolCall.Function.Name))
+			}
+		}
+		
+		// Add summary to response
+		if len(toolResults) > 0 || len(toolErrors) > 0 {
+			llmResponse.Message += "\n\n=== Tool Execution Summary ==="
+			for _, result := range toolResults {
+				llmResponse.Message += fmt.Sprintf("\n✅ %s", result)
+			}
+			for _, error := range toolErrors {
+				llmResponse.Message += fmt.Sprintf("\n❌ %s", error)
 			}
 		}
 	}

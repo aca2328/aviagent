@@ -617,22 +617,17 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 	}
 	
 	// Determine tool choice based on query analysis and forcing logic
+	// Use auto tool choice for all queries, but with enhanced system prompt guidance
+	chatReq.ToolChoice = "auto"
+	
 	if forceToolUsage {
-		// For queries that MUST use tools, be very specific about which tool to use
+		// For queries that should use tools, enhance the system message
 		toolName := determineBestToolForQuery(query)
-		chatReq.ToolChoice = map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name": toolName,
-			},
-		}
-		c.logger.Info("Forcing specific tool usage",
+		c.logger.Info("Query requires tool usage - enhancing system prompt",
 			zap.String("query", query),
-			zap.String("tool", toolName),
-			zap.String("tool_choice_type", "specific_function"))
+			zap.String("suggested_tool", toolName),
+			zap.String("tool_choice_type", "auto_with_guidance"))
 	} else {
-		// For general queries, use auto but with enhanced guidance
-		chatReq.ToolChoice = "auto"
 		c.logger.Info("Using automatic tool selection",
 			zap.String("query", query),
 			zap.String("tool_choice_type", "auto"))
@@ -641,17 +636,27 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 	// Add detailed logging for tool choice decisions
 	c.logger.Info("Tool choice decision completed",
 		zap.String("query", query),
-		zap.Bool("force_tool_usage", forceToolUsage),
-		zap.String("tool_choice_type", fmt.Sprintf("%T", chatReq.ToolChoice)),
-		zap.Any("tool_choice_value", chatReq.ToolChoice))
+		zap.Bool("suggest_tool_usage", forceToolUsage),
+		zap.String("tool_choice_type", "auto"),
+		zap.String("strategy", "auto_with_guidance"))
 	
-	// If we're forcing tool usage, modify the system message to be even more explicit
+	// If we're suggesting tool usage, enhance the system message with better guidance
 	if forceToolUsage && len(messages) > 0 {
 		originalSystemMessage := messages[0].Content
-		enhancedSystemMessage := originalSystemMessage + "\n\n*** IMPORTANT: THIS QUERY REQUIRES TOOL USAGE - DO NOT ANSWER WITHOUT USING TOOLS ***"
+		toolName := determineBestToolForQuery(query)
+		
+		// Create enhanced system message with specific tool guidance
+		enhancedSystemMessage := originalSystemMessage + fmt.Sprintf(
+			"\n\n=== TOOL USAGE GUIDANCE ===\n"+
+			"For the query '%s', you should use the '%s' tool.\n"+
+			"This query requires accessing real-time Avi controller data.\n"+
+			"DO NOT answer with general knowledge - use the tool instead.",
+			query, toolName)
+		
 		messages[0].Content = enhancedSystemMessage
 		chatReq.Messages = messages
-		c.logger.Info("Enhanced system message to force tool usage")
+		c.logger.Info("Enhanced system message with tool usage guidance",
+			zap.String("tool", toolName))
 	}
 
 	// Send request to Mistral AI
