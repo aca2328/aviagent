@@ -6,21 +6,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"aviagent/internal/config"
 	"aviagent/internal/llm"
 
+	"github.com/fatih/color"
 	"go.uber.org/zap"
 )
 
 // Client represents the Mistral AI API client
 type Client struct {
-	config     *config.MistralConfig
-	httpClient *http.Client
-	logger     *zap.Logger
-	apiKey     string
+	config      *config.MistralConfig
+	httpClient  *http.Client
+	logger      *zap.Logger
+	apiKey      string
+	activeFlows map[string]*mistralFlow
+	// Color functions for enhanced logging
+	requestColor func(...interface{}) string
+	responseColor func(...interface{}) string
+	toolColor func(...interface{}) string
+	errorColor func(...interface{}) string
+	infoColor func(...interface{}) string
+	flowColor func(...interface{}) string
+}
+
+// mistralFlow tracks the request/response flow for better logging
+type mistralFlow struct {
+	flowID      string
+	requestTime time.Time
+	steps       []string
 }
 
 // ChatMessage represents a chat message for Mistral AI
@@ -139,11 +157,102 @@ func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger) (*C
 	}
 
 	return &Client{
-		config:     cfg,
-		httpClient: httpClient,
-		logger:     logger,
-		apiKey:     apiKey,
+		config:      cfg,
+		httpClient:  httpClient,
+		logger:      logger,
+		apiKey:      apiKey,
+		activeFlows: make(map[string]*mistralFlow),
+		// Initialize color functions
+		requestColor:  color.New(color.FgBlue).SprintFunc(),
+		responseColor: color.New(color.FgGreen).SprintFunc(),
+		toolColor:     color.New(color.FgMagenta).SprintFunc(),
+		errorColor:    color.New(color.FgRed).SprintFunc(),
+		infoColor:     color.New(color.FgCyan).SprintFunc(),
+		flowColor:     color.New(color.FgYellow).SprintFunc(),
 	}, nil
+}
+
+// logFlowStart begins tracking a new request/response flow
+func (c *Client) logFlowStart(query string) string {
+	flowID := "flow-" + fmt.Sprintf("%08x", rand.Int31())
+	c.activeFlows[flowID] = &mistralFlow{
+		flowID:      flowID,
+		requestTime: time.Now(),
+		steps:       []string{fmt.Sprintf("🚀 Request started: %s", query)},
+	}
+
+	// Log the flow start with color
+	flowMarker := c.flowColor(fmt.Sprintf("=== MISTRAL FLOW START [%s] ===", flowID))
+	c.logger.Info(flowMarker,
+		zap.String("flow_id", flowID),
+		zap.String("query", query),
+		zap.String("timestamp", time.Now().Format(time.RFC3339)))
+
+	return flowID
+}
+
+// logFlowStep adds a step to the current flow with color coding
+func (c *Client) logFlowStep(flowID, stepType, message string, fields ...zap.Field) {
+	if flow, exists := c.activeFlows[flowID]; exists {
+		flow.steps = append(flow.steps, message)
+	}
+
+	// Determine color based on step type
+	var colorFunc func(...interface{}) string
+	switch stepType {
+	case "request":
+		colorFunc = c.requestColor
+	case "response":
+		colorFunc = c.responseColor
+	case "tool":
+		colorFunc = c.toolColor
+	case "error":
+		colorFunc = c.errorColor
+	default:
+		colorFunc = c.infoColor
+	}
+
+	// Format the log message with color
+	flowMarker := c.flowColor(fmt.Sprintf("[%s]", flowID))
+	stepMarker := colorFunc(fmt.Sprintf("%s:", strings.ToUpper(stepType)))
+	formattedMessage := fmt.Sprintf("%s %s %s", flowMarker, stepMarker, message)
+
+	// Add color-coded fields
+	colorFields := append([]zap.Field{zap.String("flow_id", flowID)}, fields...)
+	c.logger.Info(formattedMessage, colorFields...)
+}
+
+// logFlowEnd completes the flow tracking
+func (c *Client) logFlowEnd(flowID, outcome string) {
+	if flow, exists := c.activeFlows[flowID]; exists {
+		duration := time.Since(flow.requestTime)
+		flow.steps = append(flow.steps, fmt.Sprintf("✅ %s (duration: %v)", outcome, duration))
+		
+		// Log summary
+		flowMarker := c.flowColor(fmt.Sprintf("=== MISTRAL FLOW END [%s] ===", flowID))
+		c.logger.Info(flowMarker,
+			zap.String("flow_id", flowID),
+			zap.String("outcome", outcome),
+			zap.Duration("duration", duration),
+			zap.Int("steps", len(flow.steps)))
+		
+		// Clean up
+		delete(c.activeFlows, flowID)
+	}
+}
+
+// logFlowError records an error in the flow
+func (c *Client) logFlowError(flowID, message string, err error) {
+	if flow, exists := c.activeFlows[flowID]; exists {
+		flow.steps = append(flow.steps, fmt.Sprintf("❌ Error: %s", message))
+	}
+
+	errorMarker := c.errorColor(fmt.Sprintf("ERROR: %s", message))
+	
+	c.logger.Error(errorMarker,
+		zap.String("flow_id", flowID),
+		zap.String("error", message),
+		zap.Error(err))
 }
 
 // makeRequest performs an authenticated API request to Mistral AI
@@ -228,7 +337,11 @@ func (c *Client) ListModels(ctx context.Context) ([]Model, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		err := fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		c.logger.Error("Models request failed",
+			zap.String("error", err.Error()),
+			zap.Int("status_code", resp.StatusCode))
+		return nil, err
 	}
 
 	var modelsResp ModelsResponse
@@ -255,6 +368,28 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 	if req.MaxTokens == 0 {
 		req.MaxTokens = c.config.MaxTokens
 	}
+
+	// Extract query for flow tracking (use last user message as query)
+	query := "API request"
+	for i := len(req.Messages) - 1; i >= 0; i-- {
+		if req.Messages[i].Role == "user" {
+			query = req.Messages[i].Content
+			if len(query) > 50 {
+				query = query[:47] + "..."
+			}
+			break
+		}
+	}
+
+	// Start flow tracking
+	flowID := c.logFlowStart(query)
+	defer c.logFlowEnd(flowID, "Chat completion completed")
+
+	// Log with flow tracking
+	c.logFlowStep(flowID, "request", "Starting Mistral API request",
+		zap.String("model", req.Model),
+		zap.Int("message_count", len(req.Messages)),
+		zap.Bool("has_tools", len(req.Tools) > 0))
 
 	// Comprehensive debug logging for request analysis
 	c.logger.Info("=== MISTRAL API REQUEST START ===")
@@ -304,10 +439,95 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		c.logFlowError(flowID, "Failed to decode response", err)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
+	// Log response details with flow tracking
+	toolCallCount := 0
+	if len(chatResp.Choices) > 0 && len(chatResp.Choices[0].ToolCalls) > 0 {
+		toolCallCount = len(chatResp.Choices[0].ToolCalls)
+	}
+
+	c.logFlowStep(flowID, "response", "Received Mistral API response",
+		zap.Int("choice_count", len(chatResp.Choices)),
+		zap.Int("tool_call_count", toolCallCount),
+		zap.String("model", chatResp.Model))
+
+	// Log tool calls if present
+	if toolCallCount > 0 {
+		for _, toolCall := range chatResp.Choices[0].ToolCalls {
+			c.logFlowStep(flowID, "tool", fmt.Sprintf("Tool call: %s", toolCall.Function.Name),
+				zap.String("tool_id", toolCall.ID),
+				zap.String("tool_type", toolCall.Type))
+		}
+	} else {
+		c.logFlowStep(flowID, "info", "No tool calls in response")
+	}
+
 	return &chatResp, nil
+}
+
+// determineBestToolForQuery maps user queries to the most appropriate tool
+func determineBestToolForQuery(query string) string {
+	lowerQuery := strings.ToLower(query)
+
+	// Virtual Service queries
+	if strings.Contains(lowerQuery, "virtual service") ||
+	   strings.Contains(lowerQuery, "load balancer service") ||
+	   strings.Contains(lowerQuery, "vs ") {
+		if strings.Contains(lowerQuery, "detail") ||
+		   strings.Contains(lowerQuery, "specific") ||
+		   strings.Contains(lowerQuery, "uuid") {
+			return "get_virtual_service"
+		}
+		return "list_virtual_services"
+	}
+
+	// Pool queries
+	if strings.Contains(lowerQuery, "pool") ||
+	   strings.Contains(lowerQuery, "backend server") ||
+	   strings.Contains(lowerQuery, "server pool") {
+		if strings.Contains(lowerQuery, "detail") ||
+		   strings.Contains(lowerQuery, "specific") ||
+		   strings.Contains(lowerQuery, "uuid") {
+			return "get_pool"
+		}
+		return "list_pools"
+	}
+
+	// Health Monitor queries
+	if strings.Contains(lowerQuery, "health monitor") ||
+	   strings.Contains(lowerQuery, "health check") ||
+	   strings.Contains(lowerQuery, "monitor") {
+		if strings.Contains(lowerQuery, "detail") ||
+		   strings.Contains(lowerQuery, "specific") {
+			return "get_health_monitor"
+		}
+		return "list_health_monitors"
+	}
+
+	// Service Engine queries
+	if strings.Contains(lowerQuery, "service engine") ||
+	   strings.Contains(lowerQuery, "se ") ||
+	   strings.Contains(lowerQuery, "load balancer instance") {
+		if strings.Contains(lowerQuery, "detail") ||
+		   strings.Contains(lowerQuery, "specific") {
+			return "get_service_engine"
+		}
+		return "list_service_engines"
+	}
+
+	// Analytics/Metrics queries
+	if strings.Contains(lowerQuery, "analytic") ||
+	   strings.Contains(lowerQuery, "metric") ||
+	   strings.Contains(lowerQuery, "performance") ||
+	   strings.Contains(lowerQuery, "statistic") {
+		return "get_analytics"
+	}
+
+	// Fallback to generic operation
+	return "execute_generic_operation"
 }
 
 // processNaturalLanguageQueryInternal processes a natural language query and returns tool calls (internal implementation)
@@ -366,15 +586,72 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 	
 	c.logger.Info("Message construction completed successfully", zap.Int("total_messages", len(messages)))
 
+	// Check if this query should force tool usage based on specific patterns
+	forceToolUsage := false
+	lowerQuery := strings.ToLower(query)
+	
+	// Patterns that should ALWAYS use tools
+	if strings.Contains(lowerQuery, "list") && (strings.Contains(lowerQuery, "virtual service") || strings.Contains(lowerQuery, "pool") || strings.Contains(lowerQuery, "service")) {
+		forceToolUsage = true
+		c.logger.Info("Forcing tool usage for list query", zap.String("query", query))
+	}
+	
+	if strings.Contains(lowerQuery, "show") && (strings.Contains(lowerQuery, "virtual service") || strings.Contains(lowerQuery, "pool") || strings.Contains(lowerQuery, "service")) {
+		forceToolUsage = true
+		c.logger.Info("Forcing tool usage for show query", zap.String("query", query))
+	}
+	
+	if strings.Contains(lowerQuery, "health status") || strings.Contains(lowerQuery, "current status") || strings.Contains(lowerQuery, "status") {
+		forceToolUsage = true
+		c.logger.Info("Forcing tool usage for status query", zap.String("query", query))
+	}
+
 	// Create chat request
 	chatReq := ChatRequest{
 		Model:       model,
 		Messages:    messages,
 		Tools:       tools,
-		ToolChoice:  "auto", // Enable automatic tool selection
 		Stream:      false,
 		Temperature: c.config.Temperature,
 		MaxTokens:   c.config.MaxTokens,
+	}
+	
+	// Determine tool choice based on query analysis and forcing logic
+	if forceToolUsage {
+		// For queries that MUST use tools, be very specific about which tool to use
+		toolName := determineBestToolForQuery(query)
+		chatReq.ToolChoice = map[string]interface{}{
+			"type": "function",
+			"function": map[string]interface{}{
+				"name": toolName,
+			},
+		}
+		c.logger.Info("Forcing specific tool usage",
+			zap.String("query", query),
+			zap.String("tool", toolName),
+			zap.String("tool_choice_type", "specific_function"))
+	} else {
+		// For general queries, use auto but with enhanced guidance
+		chatReq.ToolChoice = "auto"
+		c.logger.Info("Using automatic tool selection",
+			zap.String("query", query),
+			zap.String("tool_choice_type", "auto"))
+	}
+	
+	// Add detailed logging for tool choice decisions
+	c.logger.Info("Tool choice decision completed",
+		zap.String("query", query),
+		zap.Bool("force_tool_usage", forceToolUsage),
+		zap.String("tool_choice_type", fmt.Sprintf("%T", chatReq.ToolChoice)),
+		zap.Any("tool_choice_value", chatReq.ToolChoice))
+	
+	// If we're forcing tool usage, modify the system message to be even more explicit
+	if forceToolUsage && len(messages) > 0 {
+		originalSystemMessage := messages[0].Content
+		enhancedSystemMessage := originalSystemMessage + "\n\n*** IMPORTANT: THIS QUERY REQUIRES TOOL USAGE - DO NOT ANSWER WITHOUT USING TOOLS ***"
+		messages[0].Content = enhancedSystemMessage
+		chatReq.Messages = messages
+		c.logger.Info("Enhanced system message to force tool usage")
 	}
 
 	// Send request to Mistral AI

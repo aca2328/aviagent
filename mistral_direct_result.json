@@ -1,0 +1,42 @@
+🧪 Testing Mistral AI with all 16 Avi Load Balancer tools
+========================================================
+
+🔧 Testing: 'list all virtual services'
+========================================
+{
+  "id": "449ff53971cd42aa9b7f5a0cf847db29",
+  "created": 1767483418,
+  "model": "mistral-medium",
+  "usage": {
+    "prompt_tokens": 1891,
+    "total_tokens": 1900,
+    "completion_tokens": 9
+  },
+  "object": "chat.completion",
+  "choices": [
+    {
+      "index": 0,
+      "finish_reason": "tool_calls",
+      "message": {
+        "role": "assistant",
+        "tool_calls": [
+          {
+            "id": "EAjqf2BZv",
+            "function": {
+              "name": "list_virtual_services",
+              "arguments": "{}"
+            },
+            "index": 0
+          }
+        ],
+        "content": ""
+      }
+    }
+  ]
+}
+
+📊 Test completed. Mistral AI should have selected the list_virtual_services tool.
+   Look for 'tool_calls' in the response containing 'list_virtual_services'
+
+💡 This test demonstrates Mistral AI's ability to select the correct tool
+   from a comprehensive set of 16 available Avi Load Balancer tools.

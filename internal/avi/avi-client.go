@@ -336,7 +336,7 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 }
 
 // ListVirtualServices retrieves all virtual services
-func (c *Client) ListVirtualServices(ctx context.Context, params map[string]string) (*APIResponse, error) {
+func (c *Client) ListVirtualServices(ctx context.Context, params map[string]string) (interface{}, error) {
 	// Generate cache key for this request
 	cacheKey := c.getCacheKey("GET", "/virtualservice", params)
 
@@ -370,7 +370,7 @@ func (c *Client) ListVirtualServices(ctx context.Context, params map[string]stri
 }
 
 // GetVirtualService retrieves a specific virtual service by UUID
-func (c *Client) GetVirtualService(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetVirtualService(ctx context.Context, uuid string, params map[string]string) (interface{}, error) {
 	endpoint := fmt.Sprintf("/virtualservice/%s", uuid)
 	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
@@ -392,7 +392,7 @@ func (c *Client) GetVirtualService(ctx context.Context, uuid string, params map[
 }
 
 // CreateVirtualService creates a new virtual service
-func (c *Client) CreateVirtualService(ctx context.Context, vsData map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) CreateVirtualService(ctx context.Context, vsData map[string]interface{}) (interface{}, error) {
 	resp, err := c.makeRequest(ctx, "POST", "/virtualservice", vsData, nil)
 	if err != nil {
 		return nil, err
@@ -413,7 +413,7 @@ func (c *Client) CreateVirtualService(ctx context.Context, vsData map[string]int
 }
 
 // UpdateVirtualService updates an existing virtual service
-func (c *Client) UpdateVirtualService(ctx context.Context, uuid string, vsData map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) UpdateVirtualService(ctx context.Context, uuid string, vsData map[string]interface{}) (interface{}, error) {
 	endpoint := fmt.Sprintf("/virtualservice/%s", uuid)
 	resp, err := c.makeRequest(ctx, "PUT", endpoint, vsData, nil)
 	if err != nil {
@@ -452,7 +452,7 @@ func (c *Client) DeleteVirtualService(ctx context.Context, uuid string) error {
 }
 
 // ListPools retrieves all pools
-func (c *Client) ListPools(ctx context.Context, params map[string]string) (*APIResponse, error) {
+func (c *Client) ListPools(ctx context.Context, params map[string]string) (interface{}, error) {
 	// Generate cache key for this request
 	cacheKey := c.getCacheKey("GET", "/pool", params)
 
@@ -486,7 +486,7 @@ func (c *Client) ListPools(ctx context.Context, params map[string]string) (*APIR
 }
 
 // GetPool retrieves a specific pool by UUID
-func (c *Client) GetPool(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetPool(ctx context.Context, uuid string, params map[string]string) (interface{}, error) {
 	endpoint := fmt.Sprintf("/pool/%s", uuid)
 	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
@@ -508,7 +508,7 @@ func (c *Client) GetPool(ctx context.Context, uuid string, params map[string]str
 }
 
 // CreatePool creates a new pool
-func (c *Client) CreatePool(ctx context.Context, poolData map[string]interface{}) (map[string]interface{}, error) {
+func (c *Client) CreatePool(ctx context.Context, poolData map[string]interface{}) (interface{}, error) {
 	resp, err := c.makeRequest(ctx, "POST", "/pool", poolData, nil)
 	if err != nil {
 		return nil, err
@@ -563,7 +563,7 @@ func (c *Client) ScaleInPool(ctx context.Context, uuid string, params map[string
 }
 
 // ListHealthMonitors retrieves all health monitors
-func (c *Client) ListHealthMonitors(ctx context.Context, params map[string]string) (*APIResponse, error) {
+func (c *Client) ListHealthMonitors(ctx context.Context, params map[string]string) (interface{}, error) {
 	resp, err := c.makeRequest(ctx, "GET", "/healthmonitor", nil, params)
 	if err != nil {
 		return nil, err
@@ -584,7 +584,7 @@ func (c *Client) ListHealthMonitors(ctx context.Context, params map[string]strin
 }
 
 // GetHealthMonitor retrieves a specific health monitor by UUID
-func (c *Client) GetHealthMonitor(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetHealthMonitor(ctx context.Context, uuid string, params map[string]string) (interface{}, error) {
 	endpoint := fmt.Sprintf("/healthmonitor/%s", uuid)
 	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
@@ -606,7 +606,7 @@ func (c *Client) GetHealthMonitor(ctx context.Context, uuid string, params map[s
 }
 
 // ListServiceEngines retrieves all service engines
-func (c *Client) ListServiceEngines(ctx context.Context, params map[string]string) (*APIResponse, error) {
+func (c *Client) ListServiceEngines(ctx context.Context, params map[string]string) (interface{}, error) {
 	resp, err := c.makeRequest(ctx, "GET", "/serviceengine", nil, params)
 	if err != nil {
 		return nil, err
@@ -627,7 +627,7 @@ func (c *Client) ListServiceEngines(ctx context.Context, params map[string]strin
 }
 
 // GetServiceEngine retrieves a specific service engine by UUID
-func (c *Client) GetServiceEngine(ctx context.Context, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetServiceEngine(ctx context.Context, uuid string, params map[string]string) (interface{}, error) {
 	endpoint := fmt.Sprintf("/serviceengine/%s", uuid)
 	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {
@@ -649,7 +649,7 @@ func (c *Client) GetServiceEngine(ctx context.Context, uuid string, params map[s
 }
 
 // GetAnalytics retrieves analytics data for a specific resource
-func (c *Client) GetAnalytics(ctx context.Context, resourceType, uuid string, params map[string]string) (map[string]interface{}, error) {
+func (c *Client) GetAnalytics(ctx context.Context, resourceType, uuid string, params map[string]string) (interface{}, error) {
 	endpoint := fmt.Sprintf("/analytics/%s/%s", resourceType, uuid)
 	resp, err := c.makeRequest(ctx, "GET", endpoint, nil, params)
 	if err != nil {

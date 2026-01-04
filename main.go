@@ -20,7 +20,7 @@ import (
 // Application version
 const (
 	AppName    = "VMware Avi LLM Agent"
-	AppVersion = "1.1.0"
+	AppVersion = "1.1.1"
 	BuildDate  = "2026-01-01"
 )
 
@@ -44,7 +44,11 @@ func main() {
 	}
 
 	// Initialize web server
-	server, err := web.NewServer(cfg, logger)
+	logger.Info("Initializing web server", 
+		zap.String("app_name", AppName),
+		zap.String("version", AppVersion),
+		zap.String("build_date", BuildDate))
+	server, err := web.NewServer(cfg, logger, AppName, AppVersion, BuildDate)
 	if err != nil {
 		logger.Fatal("Failed to initialize web server", zap.Error(err))
 	}
@@ -57,6 +61,9 @@ func main() {
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
 	}
+
+	// Set shutdown context for server
+	server.ShutdownContext = context.Background()
 
 	// Start server in a goroutine
 	go func() {

@@ -1,6 +1,6 @@
 # VMware Avi LLM Agent Configuration
 server:
-  port: 8080
+  port: 8083
   read_timeout: 30
   write_timeout: 30
   idle_timeout: 60

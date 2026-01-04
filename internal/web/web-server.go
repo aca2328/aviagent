@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"aviagent/internal/avi"
@@ -82,6 +83,14 @@ type Server struct {
 	llmClient      LLMClient
 	mistralClient *mistral.Client
 	router        *gin.Engine
+	appName       string
+	version       string
+	buildDate     string
+	// Lazy Avi client initialization
+	aviClientInit sync.Once
+	aviClientErr  error
+	aviClientMu   sync.Mutex
+	ShutdownContext context.Context
 }
 
 // ChatMessage represents a chat message for the web interface
@@ -102,17 +111,65 @@ type ChatSession struct {
 	Created  time.Time     `json:"created"`
 }
 
+// getAviClient provides lazy initialization of Avi client
+func (s *Server) getAviClient() (AviClientInterface, error) {
+	s.aviClientInit.Do(func() {
+		s.aviClientMu.Lock()
+		defer s.aviClientMu.Unlock()
+
+		if s.aviClient != nil {
+			return // Already initialized
+		}
+
+		s.logger.Info("Initializing Avi client",
+			zap.String("host", s.config.Avi.Host),
+			zap.String("username", s.config.Avi.Username))
+
+		client, err := avi.NewClient(&s.config.Avi, s.logger)
+		if err != nil {
+			s.logger.Error("Avi client initialization failed", zap.Error(err))
+			s.aviClientErr = fmt.Errorf("avi client initialization failed: %w", err)
+			return
+		}
+
+		s.aviClient = client
+		s.logger.Info("Avi client initialized successfully")
+	})
+
+	s.aviClientMu.Lock()
+	defer s.aviClientMu.Unlock()
+
+	return s.aviClient, s.aviClientErr
+}
+
 // NewServer creates a new web server
-func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
-	// Initialize Avi client using official SDK
-	aviClient, err := avi.NewOfficialClient(&cfg.Avi, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Avi client: %w", err)
+func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDate string) (*Server, error) {
+	logger.Info("NewServer called", 
+		zap.String("app_name", appName),
+		zap.String("version", version),
+		zap.String("build_date", buildDate))
+
+	// Verify Avi controller configuration
+	logger.Info("Avi Controller Configuration",
+		zap.String("host", cfg.Avi.Host),
+		zap.String("username", cfg.Avi.Username),
+		zap.String("tenant", cfg.Avi.Tenant),
+		zap.Bool("insecure", cfg.Avi.Insecure))
+
+	// Create server with version info immediately
+	server := &Server{
+		config:        cfg,
+		logger:        logger,
+		appName:       appName,
+		version:       version,
+		buildDate:     buildDate,
+		ShutdownContext: context.Background(), // Will be updated when server starts
 	}
 
-	// Initialize the appropriate LLM client based on provider
+	// Initialize LLM client (fast operation)
 	var llmClient LLMClient
 	var mistralClient *mistral.Client
+	var err error
 
 	if cfg.Provider == "ollama" {
 		// Initialize Ollama client
@@ -134,18 +191,69 @@ func NewServer(cfg *config.Config, logger *zap.Logger) (*Server, error) {
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
 	}
 
-	server := &Server{
-		config:        cfg,
-		logger:        logger,
-		aviClient:     aviClient,
-		llmClient:      llmClient,
-		mistralClient: mistralClient,
-	}
+	// Set LLM clients (Avi client will be initialized lazily)
+	server.llmClient = llmClient
+	server.mistralClient = mistralClient
 
-	// Initialize router
+	// Initialize router (doesn't depend on Avi client)
 	server.setupRouter()
 
+	// Start Avi client initialization in background
+	go server.initializeAviClientAsync()
+
 	return server, nil
+}
+
+// initializeAviClientAsync initializes Avi client in background
+func (s *Server) initializeAviClientAsync() {
+	// Add small delay to allow server to start first
+	time.Sleep(1 * time.Second)
+
+	if _, err := s.getAviClient(); err != nil {
+		s.logger.Error("Background Avi client initialization failed", zap.Error(err))
+		// Schedule retry
+		go s.scheduleAviClientRetry()
+	}
+}
+
+// isHealthCheckProbe checks if request is from a health check probe
+func (s *Server) isHealthCheckProbe(c *gin.Context) bool {
+	userAgent := c.Request.Header.Get("User-Agent")
+	return strings.Contains(userAgent, "kube-probe") ||
+	       strings.Contains(userAgent, "GoogleHC") ||
+	       strings.Contains(userAgent, "healthcheck") ||
+	       strings.Contains(userAgent, "load-balancer-health-check") ||
+	       strings.Contains(userAgent, "ELB-HealthChecker") ||
+	       strings.Contains(userAgent, "AWS-HealthChecker")
+}
+
+// scheduleAviClientRetry implements retry logic for Avi client initialization
+func (s *Server) scheduleAviClientRetry() {
+	retryInterval := 30 * time.Second
+	maxRetries := 5
+	retryCount := 0
+
+	for retryCount < maxRetries {
+		retryCount++
+		s.logger.Info("Retrying Avi client initialization",
+			zap.Int("attempt", retryCount),
+			zap.Int("max_attempts", maxRetries))
+
+		select {
+		case <-time.After(retryInterval):
+			if _, err := s.getAviClient(); err == nil {
+				s.logger.Info("Avi client initialization successful on retry",
+					zap.Int("attempt", retryCount))
+				return
+			}
+		case <-s.ShutdownContext.Done():
+			s.logger.Info("Server shutting down, canceling Avi client retries")
+			return
+		}
+	}
+
+	s.logger.Error("Max Avi client initialization retries reached",
+		zap.Int("attempts", maxRetries))
 }
 
 // setupRouter sets up the Gin router with all routes and middleware
@@ -439,6 +547,12 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 // executeToolCall executes a tool call against the Avi API
 func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (interface{}, error) {
+	// Get Avi client (lazy initialization)
+	aviClient, err := s.getAviClient()
+	if err != nil {
+		return nil, fmt.Errorf("Avi client not available: %w", err)
+	}
+	
 	switch toolCall.Function.Name {
 	case "list_virtual_services":
 		params := make(map[string]string)
@@ -449,7 +563,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListVirtualServices(ctx, params)
+		return aviClient.ListVirtualServices(ctx, params)
 
 	case "get_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -460,10 +574,10 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetVirtualService(ctx, uuid, params)
+		return aviClient.GetVirtualService(ctx, uuid, params)
 
 	case "create_virtual_service":
-		return s.aviClient.CreateVirtualService(ctx, toolCall.Args)
+		return aviClient.CreateVirtualService(ctx, toolCall.Args)
 
 	case "update_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -471,14 +585,14 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the data
-		return s.aviClient.UpdateVirtualService(ctx, uuid, toolCall.Args)
+		return aviClient.UpdateVirtualService(ctx, uuid, toolCall.Args)
 
 	case "delete_virtual_service":
 		uuid, ok := toolCall.Args["uuid"].(string)
 		if !ok {
 			return nil, fmt.Errorf("uuid parameter required")
 		}
-		return nil, s.aviClient.DeleteVirtualService(ctx, uuid)
+		return nil, aviClient.DeleteVirtualService(ctx, uuid)
 
 	case "list_pools":
 		params := make(map[string]string)
@@ -489,7 +603,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListPools(ctx, params)
+		return aviClient.ListPools(ctx, params)
 
 	case "get_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -500,10 +614,10 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetPool(ctx, uuid, params)
+		return aviClient.GetPool(ctx, uuid, params)
 
 	case "create_pool":
-		return s.aviClient.CreatePool(ctx, toolCall.Args)
+		return aviClient.CreatePool(ctx, toolCall.Args)
 
 	case "scale_out_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -511,7 +625,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the parameters
-		return nil, s.aviClient.ScaleOutPool(ctx, uuid, toolCall.Args)
+		return nil, aviClient.ScaleOutPool(ctx, uuid, toolCall.Args)
 
 	case "scale_in_pool":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -519,7 +633,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			return nil, fmt.Errorf("uuid parameter required")
 		}
 		delete(toolCall.Args, "uuid") // Remove UUID from the parameters
-		return nil, s.aviClient.ScaleInPool(ctx, uuid, toolCall.Args)
+		return nil, aviClient.ScaleInPool(ctx, uuid, toolCall.Args)
 
 	case "list_health_monitors":
 		params := make(map[string]string)
@@ -530,7 +644,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListHealthMonitors(ctx, params)
+		return aviClient.ListHealthMonitors(ctx, params)
 
 	case "get_health_monitor":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -541,7 +655,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetHealthMonitor(ctx, uuid, params)
+		return aviClient.GetHealthMonitor(ctx, uuid, params)
 
 	case "list_service_engines":
 		params := make(map[string]string)
@@ -552,7 +666,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 				}
 			}
 		}
-		return s.aviClient.ListServiceEngines(ctx, params)
+		return aviClient.ListServiceEngines(ctx, params)
 
 	case "get_service_engine":
 		uuid, ok := toolCall.Args["uuid"].(string)
@@ -563,7 +677,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if fields, ok := toolCall.Args["fields"].(string); ok {
 			params["fields"] = fields
 		}
-		return s.aviClient.GetServiceEngine(ctx, uuid, params)
+		return aviClient.GetServiceEngine(ctx, uuid, params)
 
 	case "get_analytics":
 		resourceType, ok := toolCall.Args["resource_type"].(string)
@@ -581,7 +695,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 		if timeRange, ok := toolCall.Args["time_range"].(string); ok {
 			params["time_range"] = timeRange
 		}
-		return s.aviClient.GetAnalytics(ctx, resourceType, uuid, params)
+		return aviClient.GetAnalytics(ctx, resourceType, uuid, params)
 
 	case "execute_generic_operation":
 		method, ok := toolCall.Args["method"].(string)
@@ -607,7 +721,7 @@ func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (in
 			}
 		}
 
-		return s.aviClient.ExecuteGenericOperation(ctx, method, endpoint, body, params)
+		return aviClient.ExecuteGenericOperation(ctx, method, endpoint, body, params)
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", toolCall.Function.Name)
@@ -709,38 +823,62 @@ func (s *Server) handleClearHistory(c *gin.Context) {
 
 // handleHealth returns health status
 func (s *Server) handleHealth(c *gin.Context) {
+	s.logger.Info("HEALTH ENDPOINT CALLED")
+	s.logger.Info("Health check requested - DEBUG", 
+		zap.String("app_name", s.appName),
+		zap.String("version", s.version),
+		zap.String("build_date", s.buildDate),
+		zap.String("server_ptr", fmt.Sprintf("%p", s)))
+	
+	ctx := c.Request.Context()
+	
 	status := gin.H{
 		"status": "healthy",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 		"provider": s.config.Provider,
-		"version": "1.0.0",
-		"build_date": "2026-01-01",
-		"app_name": "VMware Avi LLM Agent",
+		"version": s.version,
+		"build_date": s.buildDate,
+		"app_name": s.appName,
+		"debug_server_ptr": fmt.Sprintf("%p", s),
 	}
 
-	// Check Avi connection with a very short timeout to avoid blocking
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second) // Reduced from 5s to 2s
-	defer cancel()
+	// Check Avi client status
+	s.aviClientMu.Lock()
+	aviClientAvailable := s.aviClient != nil
+	aviClientError := s.aviClientErr
+	s.aviClientMu.Unlock()
 
-	// Only check Avi connection if we're not in a health check storm
-	// Add a simple check to see if this is a frequent health check
-	if c.Request.Header.Get("User-Agent") != "kube-probe/1.27" && 
-	   c.Request.Header.Get("User-Agent") != "GoogleHC/1.0" {
-		
-		if _, err := s.aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "1"}); err != nil {
-			status["avi_status"] = "unhealthy"
-			status["avi_error"] = err.Error()
+	if aviClientAvailable {
+		status["avi_status"] = "initialized"
+
+		// Quick health check if this isn't a frequent probe
+		if !s.isHealthCheckProbe(c) {
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			defer cancel()
+
+			// Use lazy Avi client initialization
+			aviClient, err := s.getAviClient()
+			if err != nil {
+				status["avi_status"] = "unhealthy"
+				status["avi_error"] = err.Error()
+			} else if _, err := aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "1"}); err != nil {
+				status["avi_status"] = "unhealthy"
+				status["avi_error"] = err.Error()
+			} else {
+				status["avi_status"] = "healthy"
+			}
 		} else {
-			status["avi_status"] = "healthy"
+			status["avi_status"] = "skipped" // Skip expensive check for probes
 		}
 	} else {
-		// For known health check probes, skip Avi check to reduce load
-		status["avi_status"] = "skipped"
+		status["avi_status"] = "initializing"
+		if aviClientError != nil {
+			status["avi_error"] = aviClientError.Error()
+		}
 	}
 
 	// Check LLM connection based on provider, but only if it's not a frequent health check
-	if c.Request.Header.Get("User-Agent") != "kube-probe/1.27" && 
-	   c.Request.Header.Get("User-Agent") != "GoogleHC/1.0" {
+	if !s.isHealthCheckProbe(c) {
 		
 		if s.config.Provider == "ollama" {
 			ollamaClient := s.llmClient.(*llm.Client)
@@ -764,6 +902,32 @@ func (s *Server) handleHealth(c *gin.Context) {
 		status["llm_status"] = "skipped"
 	}
 
+	// Update overall status based on component health
+	s.logger.Info("DEBUG: Starting status update logic", 
+		zap.Any("current_status", status["status"]),
+		zap.Any("avi_status", status["avi_status"]),
+		zap.Any("llm_status", status["llm_status"]))
+	
+	isHealthy := true
+	if aviStatus, exists := status["avi_status"]; exists && aviStatus == "unhealthy" {
+		isHealthy = false
+		s.logger.Info("DEBUG: Avi status is unhealthy, setting overall status to degraded")
+	}
+	if llmStatus, exists := status["llm_status"]; exists && llmStatus == "unhealthy" {
+		isHealthy = false
+		s.logger.Info("DEBUG: LLM status is unhealthy, setting overall status to degraded")
+	}
+	
+	s.logger.Info("DEBUG: Final status decision", zap.Bool("isHealthy", isHealthy))
+	
+	if isHealthy {
+		status["status"] = "healthy"
+		s.logger.Info("DEBUG: Setting overall status to healthy")
+	} else {
+		status["status"] = "degraded"
+		s.logger.Info("DEBUG: Setting overall status to degraded")
+	}
+	
 	c.JSON(http.StatusOK, status)
 }
 
@@ -789,8 +953,14 @@ func (s *Server) handleAviProxy(c *gin.Context) {
 		}
 	}
 
-	// Execute the operation with context
-	result, err := s.aviClient.ExecuteGenericOperation(c.Request.Context(), method, path, body, params)
+	// Execute the operation with context (using lazy Avi client initialization)
+	aviClient, err := s.getAviClient()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Avi client not available: " + err.Error()})
+		return
+	}
+	
+	result, err := aviClient.ExecuteGenericOperation(c.Request.Context(), method, path, body, params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -818,6 +988,9 @@ func (s *Server) corsMiddleware() gin.HandlerFunc {
 
 // Close closes the server and performs cleanup
 func (s *Server) Close() error {
+	s.aviClientMu.Lock()
+	defer s.aviClientMu.Unlock()
+	
 	if s.aviClient != nil {
 		return s.aviClient.Close()
 	}

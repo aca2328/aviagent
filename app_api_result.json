@@ -1,0 +1,25 @@
+🧪 Testing Avi LLM Agent with all 16 tools via application API
+==============================================================
+
+🔧 Testing: 'list all virtual services' via local app
+======================================================
+{
+  "message": "",
+  "model": "mistral-medium",
+  "usage": {
+    "prompt_tokens": 3125,
+    "completion_tokens": 23,
+    "total_tokens": 3148,
+    "duration_ms": 0
+  }
+}
+
+📊 Test completed. The Avi LLM Agent should have:
+   1. Received the request
+   2. Sent it to Mistral AI with all 16 tools
+   3. Received a tool call response from Mistral
+   4. Executed the list_virtual_services tool
+   5. Returned the virtual services data
+
+💡 Look for the virtual services data in the response.
+   The response should contain actual virtual service information from the Avi controller.
