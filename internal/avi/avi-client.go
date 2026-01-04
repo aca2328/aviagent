@@ -47,9 +47,14 @@ type cacheEntry struct {
 // Session holds authentication session information
 // Session represents the authentication session with Avi controller
 type Session struct {
-	SessionID string      `json:"sessionid"`
-	CSRFToken string      `json:"csrftoken"`
-	Version   interface{} `json:"version"` // Can be string or object depending on Avi version
+	SessionID   string      `json:"sessionid"`
+	CSRFToken   string      `json:"csrftoken"`
+	Version     interface{} `json:"version"` // Can be string or object depending on Avi version
+	SessionCookieName string `json:"session_cookie_name"`
+	User        struct {
+		Username string `json:"username"`
+		UUID     string `json:"uuid"`
+	} `json:"user"`
 }
 
 // GetVersionString extracts the version string from the Version field
@@ -205,6 +210,12 @@ func (c *Client) authenticate() error {
 func (c *Client) authenticateSession() error {
 	loginURL := fmt.Sprintf("https://%s/login", c.config.Host)
 	
+	c.logger.Info("Attempting Avi controller authentication",
+		zap.String("login_url", loginURL),
+		zap.String("username", c.config.Username),
+		zap.String("version", c.config.Version),
+		zap.Bool("insecure", c.config.Insecure))
+	
 	loginData := map[string]string{
 		"username": c.config.Username,
 		"password": c.config.Password,
@@ -215,6 +226,11 @@ func (c *Client) authenticateSession() error {
 		return fmt.Errorf("failed to marshal login data: %w", err)
 	}
 
+	c.logger.Info("Avi login request details",
+		zap.String("request_body", string(jsonData)),
+		zap.String("content_type", "application/json"),
+		zap.String("avi_version", c.config.Version))
+
 	req, err := http.NewRequest("POST", loginURL, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create login request: %w", err)
@@ -222,26 +238,78 @@ func (c *Client) authenticateSession() error {
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Avi-Version", c.config.Version)
+	
+	c.logger.Info("Avi login request headers configured",
+		zap.String("content_type", req.Header.Get("Content-Type")),
+		zap.String("avi_version", req.Header.Get("X-Avi-Version")))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.logger.Error("Avi login request failed", zap.Error(err))
 		return fmt.Errorf("login request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	c.logger.Info("Avi login response received",
+		zap.Int("status_code", resp.StatusCode),
+		zap.String("status", resp.Status))
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("login failed with status %d: %s", resp.StatusCode, string(body))
+		errorMsg := fmt.Sprintf("login failed with status %d: %s", resp.StatusCode, string(body))
+		c.logger.Error("Avi login failed",
+			zap.Int("status_code", resp.StatusCode),
+			zap.String("error_response", string(body)))
+		return fmt.Errorf(errorMsg)
 	}
 
 	// Parse session information from response
-	var session Session
-	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
-		return fmt.Errorf("failed to parse session response: %w", err)
+	// First try to get session from cookies (modern Avi controllers)
+	sessionID := ""
+	csrfToken := ""
+	
+	// Extract cookies from response
+	for _, cookie := range resp.Cookies() {
+		if cookie.Name == "avi-sessionid" || cookie.Name == "sessionid" {
+			sessionID = cookie.Value
+		}
+		if cookie.Name == "csrftoken" {
+			csrfToken = cookie.Value
+		}
+	}
+	
+	// If cookies are empty, try to parse from JSON response (older controllers)
+	if sessionID == "" || csrfToken == "" {
+		var session Session
+		if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+			body, _ := io.ReadAll(resp.Body)
+			c.logger.Error("Failed to parse session response",
+				zap.Error(err),
+				zap.String("response_body", string(body)))
+			return fmt.Errorf("failed to parse session response: %w", err)
+		}
+		
+		// Use parsed values if cookies were empty
+		if sessionID == "" {
+			sessionID = session.SessionID
+		}
+		if csrfToken == "" {
+			csrfToken = session.CSRFToken
+		}
 	}
 
-	c.session = &session
-	c.logger.Info("Session authentication successful", zap.String("version", session.GetVersionString()))
+	c.logger.Info("Session authentication successful - parsed session data",
+		zap.String("session_id", sessionID),
+		zap.String("csrf_token", csrfToken))
+
+	// Create session object
+	c.session = &Session{
+		SessionID:   sessionID,
+		CSRFToken:   csrfToken,
+		Version:     "31.1.1", // We'll get this from the API
+	}
+	
+	c.logger.Info("Session authentication successful")
 
 	return nil
 }
@@ -304,8 +372,13 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 	if c.authMethod == "basic" {
 		// Basic authentication
 		req.SetBasicAuth(c.config.Username, c.config.Password)
+		c.logger.Info("Using Basic Authentication for API request")
 	} else {
 		// Session-based authentication
+		c.logger.Info("Using Session Authentication for API request",
+			zap.String("csrf_token", c.session.CSRFToken),
+			zap.String("session_id", c.session.SessionID))
+		
 		if c.session.CSRFToken != "" {
 			req.Header.Set("X-CSRFToken", c.session.CSRFToken)
 		}
