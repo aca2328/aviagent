@@ -434,16 +434,19 @@ func (s *Server) handleChat(c *gin.Context) {
 func (s *Server) handleHTMXChat(c *gin.Context) {
 	message := c.PostForm("message")
 	model := c.PostForm("model")
+	timestamp := time.Now().Format("15:04:05")
 
 	s.logger.Info("HTMX Chat request received",
 		zap.String("message", message),
 		zap.String("model", model),
-		zap.String("user_agent", c.Request.UserAgent()))
+		zap.String("user_agent", c.Request.UserAgent()),
+		zap.String("timestamp", timestamp))
 
 	if message == "" {
 		s.logger.Warn("Empty message received in HTMX chat request")
 		c.HTML(http.StatusBadRequest, "chat.html", gin.H{
 			"error": "Message cannot be empty",
+			"timestamp": timestamp,
 		})
 		return
 	}
@@ -455,7 +458,8 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 
 	s.logger.Info("Processing HTMX chat message",
 		zap.String("message", message),
-		zap.String("model", model))
+		zap.String("model", model),
+		zap.String("timestamp", timestamp))
 
 	// Process the chat message
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
@@ -476,12 +480,16 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		zap.Int("tool_calls", len(response.ToolCalls)),
 		zap.Int("response_length", len(response.Message)))
 	
+	// Check if the response contains tool execution errors
+	hasToolErrors := strings.Contains(response.Message, "❌")
+	
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
 		"assistantMessage": response.Message,
 		"model":           response.Model,
 		"toolCalls":       response.ToolCalls,
 		"hasToolCalls":    len(response.ToolCalls) > 0,
+		"hasToolErrors":   hasToolErrors,
 		"timestamp":       time.Now().Format("15:04:05"),
 		"showDebug":       true,
 	})
