@@ -143,13 +143,45 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Scroll to bottom
                 const chatMessages = document.getElementById('chat-messages');
                 if (chatMessages) {
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                    setTimeout(function() {
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }, 100); // Small delay to ensure content is rendered
                 }
             }
             
             // Re-focus on input
             if (messageInput) {
                 messageInput.focus();
+            }
+        });
+        
+        // Add visual feedback during request processing
+        chatForm.addEventListener('htmx:beforeRequest', function(event) {
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.style.display = 'block';
+            }
+            
+            // Disable submit button during processing
+            const sendButton = document.getElementById('send-button');
+            if (sendButton) {
+                sendButton.disabled = true;
+                sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            }
+        });
+        
+        // Restore UI after request completes
+        chatForm.addEventListener('htmx:afterRequest', function(event) {
+            const loadingIndicator = document.getElementById('loading-indicator');
+            if (loadingIndicator) {
+                loadingIndicator.style.display = 'none';
+            }
+            
+            // Re-enable submit button
+            const sendButton = document.getElementById('send-button');
+            if (sendButton) {
+                sendButton.disabled = false;
+                sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
             }
         });
     }

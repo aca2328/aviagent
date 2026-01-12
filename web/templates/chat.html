@@ -25,8 +25,8 @@
 </div>
 {{end}}
 
-<!-- Assistant Response -->
-{{if .assistantMessage}}
+<!-- Assistant Response - Always show if there are tool calls or assistant message -->
+{{if or .assistantMessage .toolCalls}}
 <div class="message assistant-message">
     <div class="message-header">
         <strong><i class="fas fa-robot"></i> Assistant</strong>
@@ -36,6 +36,8 @@
         {{end}}
     </div>
     <div class="message-content">
+        <!-- Show assistant message if present -->
+        {{if .assistantMessage}}
         <!-- Format the message content with proper line breaks and code blocks -->
         {{range $line := (split .assistantMessage "\n")}}
             {{if hasPrefix $line "```"}}
@@ -63,8 +65,15 @@
                 <p>{{$line}}</p>
             {{end}}
         {{end}}
+        {{else if .toolCalls}}
+        <!-- Show processing message when tool calls are present but no assistant message -->
+        <div class="alert alert-info">
+            <i class="fas fa-spinner fa-spin me-2"></i>
+            Processing your request using API tools...
+        </div>
+        {{end}}
         
-        <!-- Tool Calls Information -->
+        <!-- Tool Calls Information - Always show if tool calls are present -->
         {{if .toolCalls}}
         <div class="tool-calls mt-3">
             <h6><i class="fas fa-tools"></i> API Operations Executed:</h6>
@@ -79,6 +88,11 @@
                                 {{range $key, $value := .Args}}
                                 <span class="badge bg-info me-1">{{$key}}: {{$value}}</span>
                                 {{end}}
+                            </small>
+                            {{end}}
+                            {{if .Function.Arguments}}
+                            <small class="text-muted d-block mt-1">
+                                Arguments: <code>{{.Function.Arguments}}</code>
                             </small>
                             {{end}}
                         </div>

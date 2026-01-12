@@ -713,6 +713,15 @@ func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error
 	if len(choice.ToolCalls) > 0 {
 		response.ToolCalls = choice.ToolCalls
 		c.logger.Info("Successfully extracted tool calls", zap.Int("count", len(response.ToolCalls)))
+		
+		// If there are tool calls but no message content, provide a default informative message
+		if response.Message == "" {
+			response.Message = "I need to use API tools to fulfill your request. Processing your request..."
+			c.logger.Info("Generated default message for tool calls with empty content")
+		} else {
+			// If there's existing content, enhance it with tool processing info
+			response.Message = choice.Message.Content + "\n\nProcessing your request using API tools..."
+		}
 	} else {
 		c.logger.Info("No tool calls found in Mistral response")
 	}

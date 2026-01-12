@@ -474,21 +474,34 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		return
 	}
 
-	// Render the response as HTML
-	s.logger.Info("HTMX response ready",
-		zap.String("message", message),
-		zap.Int("tool_calls", len(response.ToolCalls)),
-		zap.Int("response_length", len(response.Message)))
+	// Enhance response handling for tool calls
+	assistantMessage := response.Message
+	hasToolCalls := len(response.ToolCalls) > 0
+	
+	// If there are tool calls but no assistant message, provide a meaningful status message
+	if hasToolCalls && assistantMessage == "" {
+		assistantMessage = "Processing your request using API tools..."
+		s.logger.Info("Generated status message for tool calls with empty content",
+			zap.String("message", message),
+			zap.Int("tool_calls", len(response.ToolCalls)))
+	}
 	
 	// Check if the response contains tool execution errors
 	hasToolErrors := strings.Contains(response.Message, "❌")
 	
+	// Render the response as HTML
+	s.logger.Info("HTMX response ready",
+		zap.String("message", message),
+		zap.String("assistant_message", assistantMessage),
+		zap.Int("tool_calls", len(response.ToolCalls)),
+		zap.Int("response_length", len(assistantMessage)))
+	
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
-		"assistantMessage": response.Message,
+		"assistantMessage": assistantMessage,
 		"model":           response.Model,
 		"toolCalls":       response.ToolCalls,
-		"hasToolCalls":    len(response.ToolCalls) > 0,
+		"hasToolCalls":    hasToolCalls,
 		"hasToolErrors":   hasToolErrors,
 		"timestamp":       time.Now().Format("15:04:05"),
 		"showDebug":       true,
@@ -496,7 +509,7 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	
 	s.logger.Info("HTMX chat completed successfully",
 		zap.String("message", message),
-		zap.Int("response_length", len(response.Message)),
+		zap.Int("response_length", len(assistantMessage)),
 		zap.Int("tool_calls", len(response.ToolCalls)))
 }
 
