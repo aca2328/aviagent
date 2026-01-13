@@ -114,7 +114,7 @@ services:
   grafana:
     image: grafana/grafana:latest
     ports:
-      - "3000:3000"
+      - "3002:3000"  # Changed to avoid conflict with Langfuse
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
@@ -172,14 +172,14 @@ services:
   langfuse:
     image: langfuse/langfuse:latest
     ports:
-      - "3001:3000"  # Host:3001 → Container:3000 (avoiding conflict with Grafana)
+      - "3000:3000"  # Standard port mapping
     environment:
       - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-secret-key-for-langfuse}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-public-key-for-langfuse}
       - LANGFUSE_HOST=http://langfuse:3000
       - DATABASE_URL=postgresql://langfuse:langfuse@postgres:5432/langfuse
-      - CLICKHOUSE_URL=clickhouse://clickhouse:8123/langfuse
-      - CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:8123/langfuse
+      - CLICKHOUSE_URL=clickhouse://clickhouse:8123/langfuse?username=langfuse&password=langfuse&database=langfuse
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:8123/langfuse?username=langfuse&password=langfuse&database=langfuse
       - CLICKHOUSE_HOST=clickhouse
       - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=langfuse
@@ -187,6 +187,7 @@ services:
       - CLICKHOUSE_DATABASE=langfuse
       - NEXTAUTH_URL=http://langfuse:3000
       - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-super-secret-nextauth-secret}
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
     depends_on:
       postgres:
         condition: service_healthy
@@ -196,8 +197,11 @@ services:
       - avi-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://langfuse:3000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
       interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
       timeout: 10s
       retries: 3
       start_period: 30s

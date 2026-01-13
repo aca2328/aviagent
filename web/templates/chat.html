@@ -7,7 +7,17 @@
     </div>
     <div class="message-content">
         <div class="alert alert-danger">
-            {{.error}}
+            <strong>Error:</strong> {{.error}}
+            {{if .suggestions}}
+            <div class="mt-2">
+                <strong>Suggestions:</strong>
+                <ul class="mb-0">
+                    {{range .suggestions}}
+                    <li>{{.}}</li>
+                    {{end}}
+                </ul>
+            </div>
+            {{end}}
         </div>
     </div>
 </div>
@@ -95,9 +105,27 @@
                                 Arguments: <code>{{.Function.Arguments}}</code>
                             </small>
                             {{end}}
+                            {{if .Status}}
+                            <small class="text-muted d-block mt-1">
+                                Status: 
+                                {{if eq .Status "success"}}
+                                <span class="badge bg-success">✓ Success</span>
+                                {{else if eq .Status "failed"}}
+                                <span class="badge bg-danger">✗ Failed</span>
+                                {{else}}
+                                <span class="badge bg-warning">⏳ {{.Status}}</span>
+                                {{end}}
+                            </small>
+                            {{end}}
                         </div>
                         <span class="badge bg-success">✓ Executed</span>
                     </div>
+                    {{if .Result}}
+                    <div class="mt-2 p-2 bg-light rounded">
+                        <small class="text-muted">Result:</small>
+                        <pre class="mb-0">{{.Result}}</pre>
+                    </div>
+                    {{end}}
                 </div>
                 {{end}}
             </div>

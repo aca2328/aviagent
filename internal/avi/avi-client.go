@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -330,7 +331,7 @@ func (c *Client) authenticateBasic() error {
 	return nil
 }
 
-// makeRequest performs an authenticated API request with context support
+// makeRequest performs an authenticated API request with context support and retry logic
 func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body interface{}, params map[string]string) (*http.Response, error) {
 	if c.session == nil {
 		return nil, fmt.Errorf("not authenticated")
@@ -355,60 +356,123 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 		requestURL += "?" + values.Encode()
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
+	// Create request with retry logic
+	var resp *http.Response
+	var err error
+	
+	// Retry up to 3 times for transient errors
+	for i := 0; i < 3; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
+		default:
+			// Create new request for each attempt
+			req, err := http.NewRequestWithContext(ctx, method, requestURL, bodyReader)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create request: %w", err)
+			}
 
-	// Set required headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Avi-Version", c.config.Version)
-	req.Header.Set("X-Avi-Tenant", c.config.Tenant)
-	if c.session.CSRFToken != "" {
-		req.Header.Set("X-CSRFToken", c.session.CSRFToken)
-	}
+			// Set required headers
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Avi-Version", c.config.Version)
+			req.Header.Set("X-Avi-Tenant", c.config.Tenant)
+			if c.session.CSRFToken != "" {
+				req.Header.Set("X-CSRFToken", c.session.CSRFToken)
+			}
 
-	// Set authentication headers based on auth method
-	if c.authMethod == "basic" {
-		// Basic authentication
-		req.SetBasicAuth(c.config.Username, c.config.Password)
-		c.logger.Info("Using Basic Authentication for API request")
-	} else {
-		// Session-based authentication
-		c.logger.Info("Using Session Authentication for API request",
-			zap.String("csrf_token", c.session.CSRFToken),
-			zap.String("session_id", c.session.SessionID))
-		
-		if c.session.CSRFToken != "" {
-			req.Header.Set("X-CSRFToken", c.session.CSRFToken)
+			// Set authentication headers based on auth method
+			if c.authMethod == "basic" {
+				// Basic authentication
+				req.SetBasicAuth(c.config.Username, c.config.Password)
+				c.logger.Info("Using Basic Authentication for API request")
+			} else {
+				// Session-based authentication
+				c.logger.Info("Using Session Authentication for API request",
+					zap.String("csrf_token", c.session.CSRFToken),
+					zap.String("session_id", c.session.SessionID))
+				
+				if c.session.CSRFToken != "" {
+					req.Header.Set("X-CSRFToken", c.session.CSRFToken)
+				}
+				// Set session cookie
+				req.AddCookie(&http.Cookie{
+					Name:  "sessionid",
+					Value: c.session.SessionID,
+				})
+			}
+
+			c.logger.Debug("Making API request",
+				zap.String("method", method),
+				zap.String("endpoint", endpoint),
+				zap.Any("params", params),
+				zap.String("url", requestURL),
+				zap.String("auth_method", c.authMethod),
+				zap.Int("attempt", i+1))
+
+			resp, err = c.httpClient.Do(req)
+			if err == nil {
+				// Success, break out of retry loop
+				break
+			}
+
+			// Check if error is retryable
+			if isRetryableError(err) {
+				c.logger.Warn("Retryable error, attempting retry",
+					zap.String("method", method),
+					zap.String("endpoint", endpoint),
+					zap.Error(err),
+					zap.Int("attempt", i+1))
+				
+				// Exponential backoff: 1s, 2s, 4s
+				time.Sleep(time.Duration(1<<i) * time.Second)
+				continue
+			}
+
+			// Non-retryable error, break immediately
+			c.logger.Error("Non-retryable API request failed",
+				zap.String("method", method),
+				zap.String("endpoint", endpoint),
+				zap.Error(err))
+			return nil, fmt.Errorf("API request failed: %w", err)
 		}
-		// Set session cookie
-		req.AddCookie(&http.Cookie{
-			Name:  "sessionid",
-			Value: c.session.SessionID,
-		})
 	}
 
-	c.logger.Debug("Making API request",
-		zap.String("method", method),
-		zap.String("endpoint", endpoint),
-		zap.Any("params", params),
-		zap.String("url", requestURL),
-		zap.String("auth_method", c.authMethod))
-
-	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.logger.Error("API request failed",
-			zap.String("method", method),
-			zap.String("endpoint", endpoint),
-			zap.Error(err))
-		return nil, fmt.Errorf("API request failed: %w", err)
+		return nil, fmt.Errorf("API request failed after retries: %w", err)
 	}
 
 	return resp, nil
 }
 
-// ListVirtualServices retrieves all virtual services
+// isRetryableError determines if an error is transient and worth retrying
+func isRetryableError(err error) bool {
+	// Network errors
+	if strings.Contains(err.Error(), "connection reset") ||
+	   strings.Contains(err.Error(), "timeout") ||
+	   strings.Contains(err.Error(), "temporary failure") ||
+	   strings.Contains(err.Error(), "i/o timeout") ||
+	   strings.Contains(err.Error(), "broken pipe") {
+		return true
+	}
+
+	// HTTP 5xx errors (we'll check these after getting response)
+	// Rate limiting errors
+	if strings.Contains(err.Error(), "429") ||
+	   strings.Contains(err.Error(), "too many requests") {
+		return true
+	}
+
+	// DNS resolution issues
+	if strings.Contains(err.Error(), "no such host") ||
+	   strings.Contains(err.Error(), "dial tcp") ||
+	   strings.Contains(err.Error(), "lookup") {
+		return true
+	}
+
+	return false
+}
+
+// ListVirtualServices retrieves all virtual services with enhanced error handling
 func (c *Client) ListVirtualServices(ctx context.Context, params map[string]string) (interface{}, error) {
 	// Generate cache key for this request
 	cacheKey := c.getCacheKey("GET", "/virtualservice", params)
@@ -421,13 +485,14 @@ func (c *Client) ListVirtualServices(ctx context.Context, params map[string]stri
 
 	resp, err := c.makeRequest(ctx, "GET", "/virtualservice", nil, params)
 	if err != nil {
-		return nil, err
+		return nil, c.handleAPIError(err, "ListVirtualServices")
 	}
 	defer resp.Body.Close()
 
+	// Enhanced status code handling
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		return nil, c.handleHTTPError(resp.StatusCode, body, "ListVirtualServices")
 	}
 
 	var result APIResponse
@@ -440,6 +505,123 @@ func (c *Client) ListVirtualServices(ctx context.Context, params map[string]stri
 	c.logger.Debug("Cached virtual services response", zap.String("key", cacheKey))
 
 	return &result, nil
+}
+
+// handleAPIError provides consistent error handling for API request failures
+func (c *Client) handleAPIError(err error, operation string) error {
+	var apiError *APIError
+	
+	// Check if it's already an APIError
+	if errors.As(err, &apiError) {
+		return apiError
+	}
+	
+	// Wrap the error with context
+	return &APIError{
+		Operation: operation,
+		Message:   fmt.Sprintf("API request failed: %v", err),
+		Cause:     err,
+		Severity:  "high",
+	}
+}
+
+// handleHTTPError provides consistent error handling for HTTP response errors
+func (c *Client) handleHTTPError(statusCode int, body []byte, operation string) error {
+	var errorMessage string
+	var suggestions []string
+	
+	switch statusCode {
+	case http.StatusUnauthorized:
+		errorMessage = "Authentication failed"
+		suggestions = []string{
+			"Check your Avi controller credentials",
+			"Verify the username and password are correct",
+			"Ensure the user has proper permissions",
+		}
+	case http.StatusForbidden:
+		errorMessage = "Access denied"
+		suggestions = []string{
+			"Check user permissions for the requested resource",
+			"Verify the tenant configuration",
+			"Contact your Avi administrator",
+		}
+	case http.StatusNotFound:
+		errorMessage = "Resource not found"
+		suggestions = []string{
+			"Verify the resource UUID or name",
+			"Check if the resource exists",
+			"Review your query parameters",
+		}
+	case http.StatusTooManyRequests:
+		errorMessage = "Rate limit exceeded"
+		suggestions = []string{
+			"Wait and try again later",
+			"Check your request frequency",
+			"Consider implementing client-side rate limiting",
+		}
+	case http.StatusInternalServerError:
+		errorMessage = "Avi controller internal error"
+		suggestions = []string{
+			"Check Avi controller logs",
+			"Verify controller health",
+			"Retry the operation later",
+		}
+	case http.StatusServiceUnavailable:
+		errorMessage = "Avi controller unavailable"
+		suggestions = []string{
+			"Check controller status",
+			"Verify network connectivity",
+			"Contact your infrastructure team",
+		}
+	default:
+		errorMessage = fmt.Sprintf("Unexpected HTTP status: %d", statusCode)
+		suggestions = []string{
+			"Check the Avi controller documentation",
+			"Review your request parameters",
+			"Contact support if the issue persists",
+		}
+	}
+	
+	// Try to extract more details from response body
+	if len(body) > 0 {
+		var errorResponse map[string]interface{}
+		if err := json.Unmarshal(body, &errorResponse); err == nil {
+			if msg, ok := errorResponse["message"].(string); ok {
+				errorMessage += ": " + msg
+			}
+		}
+	}
+	
+	return &APIError{
+		Operation:    operation,
+		Message:      errorMessage,
+		HTTPStatus:   statusCode,
+		ResponseBody: string(body),
+		Suggestions:  suggestions,
+		Severity:     "high",
+	}
+}
+
+// APIError represents a structured error from the Avi API client
+type APIError struct {
+	Operation    string
+	Message      string
+	Cause        error
+	HTTPStatus   int
+	ResponseBody string
+	Suggestions  []string
+	Severity     string // low, medium, high, critical
+}
+
+func (e *APIError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %s (operation: %s)", e.Message, e.Cause.Error(), e.Operation)
+	}
+	return fmt.Sprintf("%s (operation: %s)", e.Message, e.Operation)
+}
+
+func (e *APIError) Unwrap() error {
+	return e.Cause
 }
 
 // GetVirtualService retrieves a specific virtual service by UUID
