@@ -14,6 +14,7 @@ type Config struct {
 	Avi       AviConfig       `mapstructure:"avi"`
 	LLM       LLMConfig       `mapstructure:"llm"`
 	Mistral   MistralConfig   `mapstructure:"mistral"`
+	Langfuse  LangfuseConfig  `mapstructure:"langfuse"`
 	Log       LogConfig       `mapstructure:"log"`
 	Provider  string          `mapstructure:"provider"` // "ollama" or "mistral"
 }
@@ -46,6 +47,16 @@ type LLMConfig struct {
 	Timeout       int      `mapstructure:"timeout"`
 	Temperature   float64  `mapstructure:"temperature"`
 	MaxTokens     int      `mapstructure:"max_tokens"`
+}
+
+// LangfuseConfig holds Langfuse observability configuration
+type LangfuseConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`
+	PublicKey     string `mapstructure:"public_key"`
+	SecretKey     string `mapstructure:"secret_key"`
+	Host          string `mapstructure:"host"`
+	Debug         bool   `mapstructure:"debug"`
+	FlushInterval int    `mapstructure:"flush_interval"`
 }
 
 // MistralConfig holds Mistral AI configuration

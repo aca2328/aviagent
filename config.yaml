@@ -37,6 +37,14 @@ mistral:
   temperature: 0.7
   max_tokens: 2048
 
+langfuse:
+  enabled: true
+  public_key: "pk-lf-1234567890"
+  secret_key: "sk-lf-1234567890"
+  host: "http://langfuse:3000"
+  debug: false
+  flush_interval: 5
+
 log:
   level: "info"
   format: "json"

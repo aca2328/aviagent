@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"aviagent/internal/config"
+	"aviagent/internal/langfuse"
 	"aviagent/internal/llm"
 
 	"github.com/fatih/color"
@@ -25,6 +26,7 @@ type Client struct {
 	logger      *zap.Logger
 	apiKey      string
 	activeFlows map[string]*mistralFlow
+	langfuseClient langfuse.LangfuseClient
 	// Color functions for enhanced logging
 	requestColor func(...interface{}) string
 	responseColor func(...interface{}) string
@@ -142,7 +144,7 @@ type Model struct {
 }
 
 // NewClient creates a new Mistral AI client
-func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger) (*Client, error) {
+func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger, langfuseClient langfuse.LangfuseClient) (*Client, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("mistral config cannot be nil")
 	}
@@ -157,11 +159,12 @@ func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger) (*C
 	}
 
 	return &Client{
-		config:      cfg,
-		httpClient:  httpClient,
-		logger:      logger,
-		apiKey:      apiKey,
-		activeFlows: make(map[string]*mistralFlow),
+		config:          cfg,
+		httpClient:      httpClient,
+		logger:          logger,
+		apiKey:          apiKey,
+		activeFlows:     make(map[string]*mistralFlow),
+		langfuseClient: langfuseClient,
 		// Initialize color functions
 		requestColor:  color.New(color.FgBlue).SprintFunc(),
 		responseColor: color.New(color.FgGreen).SprintFunc(),
@@ -425,9 +428,36 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 		zap.String("json_length", fmt.Sprintf("%d", len(jsonData))),
 		zap.String("full_json", string(jsonData)))
 
+	// Start Langfuse trace for this Mistral interaction
+	var langfuseTraceID string
+	if c.langfuseClient != nil {
+		// Extract user ID and session ID from context or use defaults
+		userID := "anonymous"
+		sessionID := fmt.Sprintf("session-%d", time.Now().Unix())
+		
+		var err error
+		langfuseTraceID, err = c.langfuseClient.TraceMistralInteraction(ctx, userID, sessionID)
+		if err != nil {
+			c.logger.Warn("Failed to start Langfuse trace", zap.Error(err))
+		}
+		
+		// Log the prompt to Langfuse
+		prompt := c.formatMessagesForLangfuse(req.Messages)
+		if err := c.langfuseClient.LogPrompt(ctx, langfuseTraceID, prompt, req.Model); err != nil {
+			c.logger.Warn("Failed to log prompt to Langfuse", zap.Error(err))
+		}
+	}
+
+	// Record start time for performance tracking
+	startTime := time.Now()
+
 	// Pass the request struct directly to makeRequest for proper marshaling
 	resp, err := c.makeRequest(ctx, "POST", "/v1/chat/completions", req)
 	if err != nil {
+		// Log error to Langfuse if available
+		if c.langfuseClient != nil && langfuseTraceID != "" {
+			_ = c.langfuseClient.LogError(ctx, langfuseTraceID, err.Error(), "api_request_failed")
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
@@ -439,8 +469,49 @@ func (c *Client) ChatCompletion(ctx context.Context, req ChatRequest) (*ChatResp
 
 	var chatResp ChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		// Log error to Langfuse if available
+		if c.langfuseClient != nil && langfuseTraceID != "" {
+			_ = c.langfuseClient.LogError(ctx, langfuseTraceID, err.Error(), "response_decode_failed")
+		}
 		c.logFlowError(flowID, "Failed to decode response", err)
 		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Log response to Langfuse
+	if c.langfuseClient != nil && langfuseTraceID != "" {
+		duration := time.Since(startTime)
+		
+		// Calculate token usage
+		usage := &langfuse.Usage{
+			InputTokens:     chatResp.Usage.PromptTokens,
+			OutputTokens:    chatResp.Usage.CompletionTokens,
+			TotalTokens:     chatResp.Usage.TotalTokens,
+		}
+		
+		// Get response content
+		responseContent := ""
+		if len(chatResp.Choices) > 0 {
+			responseContent = chatResp.Choices[0].Message.Content
+		}
+		
+		// Log the response
+		finishReason := "stop"
+		if len(chatResp.Choices) > 0 {
+			finishReason = chatResp.Choices[0].FinishReason
+		}
+		
+		if err := c.langfuseClient.LogResponse(ctx, langfuseTraceID, responseContent, usage, duration, finishReason); err != nil {
+			c.logger.Warn("Failed to log response to Langfuse", zap.Error(err))
+		}
+		
+		// Log tool calls if present
+		if len(chatResp.Choices) > 0 && len(chatResp.Choices[0].ToolCalls) > 0 {
+			for i, toolCall := range chatResp.Choices[0].ToolCalls {
+				if err := c.langfuseClient.LogToolCall(ctx, langfuseTraceID, toolCall.Function.Name, i, toolCall.Function.Arguments); err != nil {
+					c.logger.Warn("Failed to log tool call to Langfuse", zap.Error(err), zap.String("tool_name", toolCall.Function.Name))
+				}
+			}
+		}
 	}
 
 	// Log response details with flow tracking
@@ -853,4 +924,13 @@ func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model s
 // GetAvailableModels returns the list of configured available models
 func (c *Client) GetAvailableModels() []string {
 	return c.config.Models
+}
+
+// formatMessagesForLangfuse formats messages for Langfuse logging
+func (c *Client) formatMessagesForLangfuse(messages []ChatMessage) string {
+	var sb strings.Builder
+	for _, msg := range messages {
+		sb.WriteString(fmt.Sprintf("%s: %s\n", msg.Role, msg.Content))
+	}
+	return sb.String()
 }

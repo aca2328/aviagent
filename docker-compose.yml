@@ -36,6 +36,14 @@ services:
       - MISTRAL_TEMPERATURE=${MISTRAL_TEMPERATURE:-0.7}
       - MISTRAL_MAX_TOKENS=${MISTRAL_MAX_TOKENS:-2048}
 
+      # Langfuse Configuration
+      - LANGFUSE_ENABLED=${LANGFUSE_ENABLED:-true}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-1234567890}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-1234567890}
+      - LANGFUSE_HOST=${LANGFUSE_HOST:-http://langfuse:3000}
+      - LANGFUSE_DEBUG=${LANGFUSE_DEBUG:-false}
+      - LANGFUSE_FLUSH_INTERVAL=${LANGFUSE_FLUSH_INTERVAL:-5}
+
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
@@ -122,12 +130,90 @@ services:
     depends_on:
       - prometheus
 
+  # PostgreSQL for Langfuse (required for metadata and auth)
+  postgres:
+    image: postgres:15
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    networks:
+      - avi-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ClickHouse for Langfuse (required for analytics and events)
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    environment:
+      - CLICKHOUSE_DB=langfuse
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+    networks:
+      - avi-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Langfuse Observability Platform
+  langfuse:
+    image: langfuse/langfuse:latest
+    ports:
+      - "3001:3000"  # Host:3001 → Container:3000 (avoiding conflict with Grafana)
+    environment:
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-secret-key-for-langfuse}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-public-key-for-langfuse}
+      - LANGFUSE_HOST=http://langfuse:3000
+      - DATABASE_URL=postgresql://langfuse:langfuse@postgres:5432/langfuse
+      - CLICKHOUSE_URL=clickhouse://clickhouse:8123/langfuse
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:8123/langfuse
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=8123
+      - CLICKHOUSE_USER=langfuse
+      - CLICKHOUSE_PASSWORD=langfuse
+      - CLICKHOUSE_DATABASE=langfuse
+      - NEXTAUTH_URL=http://langfuse:3000
+      - NEXTAUTH_SECRET=${LANGFUSE_NEXTAUTH_SECRET:-super-secret-nextauth-secret}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - avi-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://langfuse:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+
+
 volumes:
   ollama_data:
     driver: local
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  langfuse_postgres_data:
+    driver: local
+  langfuse_clickhouse_data:
     driver: local
 
 networks:

@@ -13,6 +13,7 @@ import (
 
 	"aviagent/internal/avi"
 	"aviagent/internal/config"
+	"aviagent/internal/langfuse"
 	"aviagent/internal/llm"
 	"aviagent/internal/mistral"
 
@@ -166,10 +167,16 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		ShutdownContext: context.Background(), // Will be updated when server starts
 	}
 
+	// Initialize Langfuse client
+	langfuseClient, err := langfuse.NewClient(&cfg.Langfuse, logger)
+	if err != nil {
+		logger.Error("Failed to initialize Langfuse client", zap.Error(err))
+		// Continue without Langfuse if it fails
+	}
+
 	// Initialize LLM client (fast operation)
 	var llmClient LLMClient
 	var mistralClient *mistral.Client
-	var err error
 
 	if cfg.Provider == "ollama" {
 		// Initialize Ollama client
@@ -180,13 +187,15 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		llmClient = ollamaClient
 		logger.Info("Initialized Ollama LLM client", zap.String("provider", "ollama"))
 	} else if cfg.Provider == "mistral" {
-		// Initialize Mistral AI client
-		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger)
+		// Initialize Mistral AI client with Langfuse integration
+		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger, langfuseClient)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize Mistral AI client: %w", err)
 		}
 		llmClient = mistralClient
-		logger.Info("Initialized Mistral AI client", zap.String("provider", "mistral"))
+		logger.Info("Initialized Mistral AI client with Langfuse integration", 
+			zap.String("provider", "mistral"),
+			zap.Bool("langfuse_enabled", cfg.Langfuse.Enabled))
 	} else {
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
 	}
