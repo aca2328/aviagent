@@ -92,6 +92,9 @@ type Server struct {
 	aviClientErr  error
 	aviClientMu   sync.Mutex
 	ShutdownContext context.Context
+	// Operation logging for real-time visibility
+	operationLogClients map[string]chan map[string]interface{}
+	operationLogMu      sync.Mutex
 }
 
 // ChatMessage represents a chat message for the web interface
@@ -361,6 +364,9 @@ func (s *Server) setupRoutes() {
 		// Health check
 		api.GET("/health", s.handleHealth)
 
+		// Server-Sent Events for real-time operation logs
+		api.GET("/events", s.handleOperationEvents)
+
 		// Avi API proxy (for direct API access)
 		api.Any("/avi/*path", s.handleAviProxy)
 	}
@@ -429,14 +435,52 @@ func (s *Server) handleChat(c *gin.Context) {
 	}
 
 	// Process the chat message
+	startTime := time.Now()
 	response, err := s.processChatMessage(ctx, request.Message, request.Model, nil)
+	elapsedTime := time.Since(startTime)
+	
 	if err != nil {
 		s.logger.Error("Failed to process chat message", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process message"})
+		// Enhanced error response with context and suggestions
+		errorResponse := gin.H{
+			"error": "Failed to process message",
+			"type": "error",
+			"timestamp": time.Now().Format(time.RFC3339),
+			"context": gin.H{
+				"operation": "processChatMessage",
+				"model": request.Model,
+				"input_length": len(request.Message),
+				"duration_ms": elapsedTime.Milliseconds(),
+			},
+			"suggestions": []string{
+				"Check your network connection",
+				"Verify the selected model is available",
+				"Try a simpler query",
+				"If the problem persists, contact support",
+			},
+		}
+		c.JSON(http.StatusInternalServerError, errorResponse)
 		return
 	}
 
-	c.JSON(http.StatusOK, response)
+	// Enhanced response with metadata and performance info
+	enhancedResponse := gin.H{
+		"message": response.Message,
+		"type": "success",
+		"timestamp": time.Now().Format(time.RFC3339),
+		"performance": gin.H{
+			"processing_time_ms": elapsedTime.Milliseconds(),
+			"model": request.Model,
+		},
+	}
+
+	// Add tool call information if present
+	if response.ToolCalls != nil && len(response.ToolCalls) > 0 {
+		enhancedResponse["tool_calls"] = len(response.ToolCalls)
+		enhancedResponse["help"] = "This response includes automated actions. Use 'show details' to see what operations were performed."
+	}
+
+	c.JSON(http.StatusOK, enhancedResponse)
 }
 
 // handleHTMXChat handles HTMX chat requests
@@ -1014,6 +1058,48 @@ func (s *Server) handleHealth(c *gin.Context) {
 	}
 	
 	c.JSON(http.StatusOK, status)
+}
+
+// handleOperationEvents provides Server-Sent Events for real-time operation logging
+func (s *Server) handleOperationEvents(c *gin.Context) {
+	// Set headers for SSE
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Create a channel to receive operation logs
+	logChannel := make(chan map[string]interface{})
+	
+	// Register this client with the server
+	clientID := fmt.Sprintf("client-%d", time.Now().UnixNano())
+	s.operationLogClients[clientID] = logChannel
+	
+	// Remove client when connection closes
+	defer func() {
+		delete(s.operationLogClients, clientID)
+		close(logChannel)
+		s.logger.Info("SSE client disconnected", zap.String("client_id", clientID))
+	}()
+
+	// Send welcome message
+	welcomeMessage := map[string]interface{}{
+		"type": "system",
+		"message": "Connected to real-time operation logs",
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	c.SSEvent("message", welcomeMessage)
+	c.Writer.Flush()
+
+	// Stream operation logs to client
+	for logEntry := range logChannel {
+		logEntry["timestamp"] = time.Now().Format(time.RFC3339)
+		if err := c.SSEvent("message", logEntry); err != nil {
+			s.logger.Error("Failed to send SSE event", zap.Error(err))
+			return
+		}
+		c.Writer.Flush()
+	}
 }
 
 // handleAviProxy provides direct access to Avi API (for advanced users)
