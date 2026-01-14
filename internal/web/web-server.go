@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -168,6 +169,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		version:       version,
 		buildDate:     buildDate,
 		ShutdownContext: context.Background(), // Will be updated when server starts
+		operationLogClients: make(map[string]chan map[string]interface{}),
 	}
 
 	// Initialize Langfuse client
@@ -214,6 +216,45 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 	go server.initializeAviClientAsync()
 
 	return server, nil
+}
+
+// toJSON converts interface{} to JSON string
+func toJSON(v interface{}) string {
+	bytes, err := json.Marshal(v)
+	if err != nil {
+		return `{"error": "failed to marshal JSON"}`
+	}
+	return string(bytes)
+}
+
+// broadcastOperationLog sends operation logs to all connected SSE clients
+func (s *Server) broadcastOperationLog(logType, message string, context map[string]interface{}) {
+	s.operationLogMu.Lock()
+	defer s.operationLogMu.Unlock()
+
+	logEntry := map[string]interface{}{
+		"type":    logType,
+		"message": message,
+	}
+
+	// Add context if provided
+	if context != nil {
+		for key, value := range context {
+			logEntry[key] = value
+		}
+	}
+
+	// Send to all connected clients
+	for clientID, clientChan := range s.operationLogClients {
+		select {
+		case clientChan <- logEntry:
+			// Successfully sent
+		default:
+			// Client channel full or blocked, skip this client
+			s.logger.Warn("Operation log channel full, dropping log entry", 
+				zap.String("client_id", clientID))
+		}
+	}
 }
 
 // initializeAviClientAsync initializes Avi client in background
@@ -413,10 +454,25 @@ func (s *Server) handleChat(c *gin.Context) {
 		return
 	}
 
+	// Broadcast operation start to SSE clients
+	s.broadcastOperationLog("info", "Starting chat processing", map[string]interface{}{
+		"operation": "chat_request",
+		"model": request.Model,
+		"message_length": len(request.Message),
+	})
+
 	// Set default model if not specified
 	if request.Model == "" {
 		request.Model = s.config.LLM.DefaultModel
+		s.broadcastOperationLog("info", "Using default model", map[string]interface{}{
+			"default_model": request.Model,
+		})
 	}
+
+	// Broadcast model validation start
+	s.broadcastOperationLog("info", "Validating model", map[string]interface{}{
+		"model": request.Model,
+	})
 
 	// Validate model
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
@@ -430,9 +486,19 @@ func (s *Server) handleChat(c *gin.Context) {
 	}
 
 	if !validModel {
+		s.broadcastOperationLog("error", "Invalid model", map[string]interface{}{
+			"model": request.Model,
+			"error": "Model not available",
+		})
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Model '%s' is not available", request.Model)})
 		return
 	}
+
+	// Broadcast processing start
+	s.broadcastOperationLog("info", "Processing chat message", map[string]interface{}{
+		"model": request.Model,
+		"message": request.Message,
+	})
 
 	// Process the chat message
 	startTime := time.Now()
@@ -441,6 +507,10 @@ func (s *Server) handleChat(c *gin.Context) {
 	
 	if err != nil {
 		s.logger.Error("Failed to process chat message", zap.Error(err))
+		s.broadcastOperationLog("error", "Chat processing failed", map[string]interface{}{
+			"error": err.Error(),
+			"duration_ms": elapsedTime.Milliseconds(),
+		})
 		// Enhanced error response with context and suggestions
 		errorResponse := gin.H{
 			"error": "Failed to process message",
@@ -462,6 +532,12 @@ func (s *Server) handleChat(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, errorResponse)
 		return
 	}
+
+	// Broadcast successful completion
+	s.broadcastOperationLog("success", "Chat processing completed", map[string]interface{}{
+		"duration_ms": elapsedTime.Milliseconds(),
+		"model": request.Model,
+	})
 
 	// Enhanced response with metadata and performance info
 	enhancedResponse := gin.H{
@@ -953,6 +1029,11 @@ func (s *Server) handleClearHistory(c *gin.Context) {
 // handleHealth returns health status
 func (s *Server) handleHealth(c *gin.Context) {
 	s.logger.Info("HEALTH ENDPOINT CALLED")
+	s.broadcastOperationLog("info", "Health check requested", map[string]interface{}{
+		"endpoint": "/health",
+		"app_name": s.appName,
+		"version": s.version,
+	})
 	s.logger.Info("Health check requested - DEBUG", 
 		zap.String("app_name", s.appName),
 		zap.String("version", s.version),
@@ -1083,18 +1164,19 @@ func (s *Server) handleOperationEvents(c *gin.Context) {
 	}()
 
 	// Send welcome message
-	welcomeMessage := map[string]interface{}{
+	welcomeMessage := fmt.Sprintf("data: %s\n\n", toJSON(map[string]interface{}{
 		"type": "system",
 		"message": "Connected to real-time operation logs",
 		"timestamp": time.Now().Format(time.RFC3339),
-	}
-	c.SSEvent("message", welcomeMessage)
+	}))
+	c.Writer.Write([]byte(welcomeMessage))
 	c.Writer.Flush()
 
 	// Stream operation logs to client
 	for logEntry := range logChannel {
 		logEntry["timestamp"] = time.Now().Format(time.RFC3339)
-		if err := c.SSEvent("message", logEntry); err != nil {
+		logMessage := fmt.Sprintf("data: %s\n\n", toJSON(logEntry))
+		if _, err := c.Writer.Write([]byte(logMessage)); err != nil {
 			s.logger.Error("Failed to send SSE event", zap.Error(err))
 			return
 		}
