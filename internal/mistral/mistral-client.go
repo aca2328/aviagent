@@ -604,6 +604,7 @@ func determineBestToolForQuery(query string) string {
 // processNaturalLanguageQueryInternal processes a natural language query and returns tool calls (internal implementation)
 func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query, model string, tools []Tool, conversationHistory []ChatMessage) (*LLMResponse, error) {
 	c.logger.Info("=== MESSAGE CONSTRUCTION START ===")
+	c.logger.Info("processNaturalLanguageQueryInternal called", zap.String("query", query), zap.String("model", model))
 	
 	// Ensure conversation history is not nil
 	if conversationHistory == nil {
@@ -687,22 +688,11 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 		MaxTokens:   c.config.MaxTokens,
 	}
 	
-	// Determine tool choice based on query analysis and forcing logic
-	// Use auto tool choice for all queries, but with enhanced system prompt guidance
+	// Use auto tool choice for all queries - let Mistral decide when to use tools
 	chatReq.ToolChoice = "auto"
-	
-	if forceToolUsage {
-		// For queries that should use tools, enhance the system message
-		toolName := determineBestToolForQuery(query)
-		c.logger.Info("Query requires tool usage - enhancing system prompt",
-			zap.String("query", query),
-			zap.String("suggested_tool", toolName),
-			zap.String("tool_choice_type", "auto_with_guidance"))
-	} else {
-		c.logger.Info("Using automatic tool selection",
-			zap.String("query", query),
-			zap.String("tool_choice_type", "auto"))
-	}
+	c.logger.Info("Using automatic tool selection for all queries",
+		zap.String("query", query),
+		zap.String("tool_choice_type", "auto"))
 	
 	// Add detailed logging for tool choice decisions
 	c.logger.Info("Tool choice decision completed",
@@ -907,10 +897,24 @@ func (c *Client) ProcessNaturalLanguageQuery(ctx context.Context, query, model s
 		return nil, err
 	}
 
-	// Log successful response
+	// Log successful response with full details
 	c.logger.Info("ProcessNaturalLanguageQuery completed successfully",
 		zap.String("response_message", mistralResp.Message),
-		zap.Int("tool_calls_count", len(mistralResp.ToolCalls)))
+		zap.Int("tool_calls_count", len(mistralResp.ToolCalls)),
+		zap.String("model", mistralResp.Model),
+		zap.Any("usage", mistralResp.Usage))
+
+	// Log the raw Mistral response for debugging
+	if c.config.Debug {
+		c.logger.Debug("About to log raw Mistral response")
+		responseJSON, err := json.Marshal(mistralResp)
+		if err == nil {
+			c.logger.Debug("Raw Mistral API response",
+				zap.String("raw_response", string(responseJSON)))
+		} else {
+			c.logger.Debug("Failed to marshal Mistral response", zap.Error(err))
+		}
+	}
 
 	// Convert Mistral response to LLMResponse format
 	return &llm.LLMResponse{
