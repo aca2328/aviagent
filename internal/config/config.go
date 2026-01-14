@@ -68,6 +68,7 @@ type MistralConfig struct {
 	Timeout      int      `mapstructure:"timeout"`
 	Temperature  float64  `mapstructure:"temperature"`
 	MaxTokens    int      `mapstructure:"max_tokens"`
+	Debug        bool     `mapstructure:"debug"`
 }
 
 // LogConfig holds logging configuration
@@ -105,6 +106,7 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("mistral.timeout", 60)
 	viper.SetDefault("mistral.temperature", 0.7)
 	viper.SetDefault("mistral.max_tokens", 2048)
+	viper.SetDefault("mistral.debug", false)
 
 	// Default to Ollama for backward compatibility
 	viper.SetDefault("provider", "ollama")

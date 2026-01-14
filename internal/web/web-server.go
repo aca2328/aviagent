@@ -938,7 +938,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 
 		// Quick health check if this isn't a frequent probe
 		if !s.isHealthCheckProbe(c) {
-			ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 			defer cancel()
 
 			// Use lazy Avi client initialization
