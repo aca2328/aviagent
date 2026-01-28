@@ -16,8 +16,8 @@ services:
       - AVI_TIMEOUT=${AVI_TIMEOUT:-30}
       - AVI_INSECURE=${AVI_INSECURE:-false}
 
-      # LLM Provider Configuration
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
+      # LLM Provider Configuration (default to python for better reliability)
+      - LLM_PROVIDER=${LLM_PROVIDER:-python}
 
       # Ollama Configuration (used when LLM_PROVIDER=ollama)
       - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
@@ -27,7 +27,7 @@ services:
       - OLLAMA_TEMPERATURE=${OLLAMA_TEMPERATURE:-0.7}
       - OLLAMA_MAX_TOKENS=${OLLAMA_MAX_TOKENS:-2048}
 
-      # Mistral AI Configuration (used when LLM_PROVIDER=mistral)
+      # Python Mistral Configuration (used when LLM_PROVIDER=python)
       - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
       - MISTRAL_API_BASE_URL=${MISTRAL_API_BASE_URL:-https://api.mistral.ai}
       - MISTRAL_DEFAULT_MODEL=${MISTRAL_DEFAULT_MODEL:-mistral-medium}

@@ -327,6 +327,133 @@ function addSystemLog(message, isError = false) {
     }, 50);
 }
 
+// Column Resizing Functionality
+function initializeColumnResizing() {
+    const resizeHandle = document.getElementById('column-resize-handle');
+    if (!resizeHandle) return;
+
+    const container = resizeHandle.parentElement;
+    const chatColumn = container.querySelector('.chat-column');
+    const logsColumn = container.querySelector('.logs-column');
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidths = { chat: 0, logs: 0 };
+
+    // Mouse down event - start resizing
+    resizeHandle.addEventListener('mousedown', function(e) {
+        isResizing = true;
+        startX = e.clientX;
+
+        // Store initial widths
+        startWidths.chat = chatColumn.getBoundingClientRect().width;
+        startWidths.logs = logsColumn.getBoundingClientRect().width;
+
+        // Prevent text selection during resize
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'col-resize';
+        container.classList.add('resizing');
+
+        e.preventDefault();
+    });
+
+    // Mouse move event - resize columns
+    document.addEventListener('mousemove', function(e) {
+        if (!isResizing) return;
+
+        // Calculate new widths
+        const deltaX = e.clientX - startX;
+        const newChatWidth = startWidths.chat + deltaX;
+        const newLogsWidth = startWidths.logs - deltaX;
+
+        // Apply minimum and maximum constraints
+        const minWidth = 200;
+        const maxWidth = container.clientWidth - minWidth - 8; // 8px for resize handle
+
+        const constrainedChatWidth = Math.max(minWidth, Math.min(newChatWidth, maxWidth));
+        const constrainedLogsWidth = Math.max(minWidth, Math.min(newLogsWidth, maxWidth));
+
+        // Apply widths
+        chatColumn.style.flex = `0 0 ${constrainedChatWidth}px`;
+        logsColumn.style.flex = `0 0 ${constrainedLogsWidth}px`;
+
+        // Update resize handle position
+        resizeHandle.style.left = `${constrainedChatWidth}px`;
+    });
+
+    // Mouse up event - stop resizing
+    document.addEventListener('mouseup', function() {
+        if (!isResizing) return;
+
+        isResizing = false;
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        container.classList.remove('resizing');
+
+        // Save preference to localStorage
+        const chatWidth = chatColumn.getBoundingClientRect().width;
+        const logsWidth = logsColumn.getBoundingClientRect().width;
+        localStorage.setItem('columnWidths', JSON.stringify({
+            chat: chatWidth,
+            logs: logsWidth
+        }));
+    });
+
+    // Load saved preferences
+    loadColumnPreferences();
+}
+
+function loadColumnPreferences() {
+    const savedWidths = localStorage.getItem('columnWidths');
+    if (!savedWidths) return;
+
+    try {
+        const widths = JSON.parse(savedWidths);
+        const chatColumn = document.querySelector('.chat-column');
+        const logsColumn = document.querySelector('.logs-column');
+
+        if (chatColumn && logsColumn) {
+            // Apply saved widths
+            chatColumn.style.flex = `0 0 ${widths.chat}px`;
+            logsColumn.style.flex = `0 0 ${widths.logs}px`;
+
+            // Position resize handle
+            const resizeHandle = document.getElementById('column-resize-handle');
+            if (resizeHandle) {
+                resizeHandle.style.left = `${widths.chat}px`;
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to load column preferences:', error);
+    }
+}
+
+// Window Resize Handling
+function initializeWindowResizeHandling() {
+    let resizeTimeout;
+
+    window.addEventListener('resize', function() {
+        // Debounce resize events
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(function() {
+            // Ensure columns maintain proper proportions on resize
+            const container = document.querySelector('.resizable-container');
+            if (!container) return;
+
+            const chatColumn = container.querySelector('.chat-column');
+            const logsColumn = container.querySelector('.logs-column');
+
+            if (chatColumn && logsColumn) {
+                // If no custom widths set, maintain 50-50 ratio
+                if (!chatColumn.style.flex && !logsColumn.style.flex) {
+                    chatColumn.style.flex = '1';
+                    logsColumn.style.flex = '1';
+                }
+            }
+        }, 100);
+    });
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize dark mode toggle
@@ -337,6 +464,12 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Initialize SSE logs
     initializeSSELogs();
+    
+    // Initialize column resizing
+    initializeColumnResizing();
+    
+    // Initialize window resize handling
+    initializeWindowResizeHandling();
     
     // Get DOM elements once
     const messageInput = document.getElementById('message-input');

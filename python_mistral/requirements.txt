@@ -1,0 +1,23 @@
+# Python Mistral Client Dependencies
+# VMware Avi LLM Agent - Python Implementation
+
+# Official Mistral AI SDK
+mistralai==1.10.1
+
+# Core dependencies
+requests==2.31.0
+pydantic>=2.10.3
+python-dotenv==1.0.0
+
+
+# Retry and resilience
+tenacity==8.2.3
+
+# Async support
+httpx>=0.28.1
+
+# Configuration
+pydantic-settings==2.1.0
+
+# Type hints
+typing-extensions>=4.14.1

@@ -790,18 +790,26 @@ body, html {
     box-shadow: var(--shadow-lg);
 }
 
-/* Main Layout */
+/* Main Layout - Updated for resizable columns */
 .chat-column {
     min-width: 0; /* Prevent flex overflow issues */
     display: flex;
     flex-direction: column;
     border-right: 1px solid var(--color-border);
+    position: relative;
 }
 
 .logs-column {
     min-width: 0; /* Prevent flex overflow issues */
     border-left: 1px solid var(--color-border);
     background-color: var(--color-surface);
+    position: relative;
+}
+
+/* Ensure proper flex behavior for resizable columns */
+.chat-column, .logs-column {
+    min-width: 200px;
+    max-width: 80%;
 }
 
 /* Chat Header */
@@ -1153,6 +1161,48 @@ body, html {
     }
 }
 
+/* Resizable Container Styles */
+.resizable-container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+.resizable-container.resizing .resizable-column {
+    opacity: 0.8;
+    transition: opacity 0.1s ease;
+}
+
+.resizable-column {
+    flex: 1;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+    transition: flex 0.2s ease;
+}
+
+.resize-handle {
+    width: 8px;
+    background-color: var(--color-border);
+    cursor: col-resize;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 10;
+    transition: background-color 0.2s ease, width 0.1s ease;
+}
+
+.resize-handle:hover {
+    background-color: var(--color-primary);
+}
+
+.resize-handle:active {
+    background-color: var(--color-primary-hover);
+    width: 4px;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .logs-column {
@@ -1161,6 +1211,24 @@ body, html {
     
     .chat-column {
         border-right: none;
+        flex: 1 !important;
+    }
+    
+    .resize-handle {
+        display: none; /* Hide resize handle on mobile */
+    }
+}
+
+@media (min-width: 769px) {
+    /* Ensure proper flex behavior on larger screens */
+    .chat-column, .logs-column {
+        flex: 1;
+        min-width: 200px;
+        max-width: 80%;
+    }
+    
+    .resize-handle {
+        display: block;
     }
 }
 

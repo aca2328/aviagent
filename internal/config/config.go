@@ -16,7 +16,7 @@ type Config struct {
 	Mistral   MistralConfig   `mapstructure:"mistral"`
 	Langfuse  LangfuseConfig  `mapstructure:"langfuse"`
 	Log       LogConfig       `mapstructure:"log"`
-	Provider  string          `mapstructure:"provider"` // "ollama" or "mistral"
+	Provider  string          `mapstructure:"provider"` // "ollama" or "python" (Python uses official Mistral SDK)
 }
 
 // ServerConfig holds web server configuration
@@ -108,8 +108,8 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("mistral.max_tokens", 2048)
 	viper.SetDefault("mistral.debug", false)
 
-	// Default to Ollama for backward compatibility
-	viper.SetDefault("provider", "ollama")
+	// Default to Python for better reliability and official Mistral SDK
+	viper.SetDefault("provider", "python")
 	
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
@@ -203,18 +203,18 @@ func validateConfig(cfg *Config) error {
 		if len(cfg.LLM.Models) == 0 {
 			return fmt.Errorf("at least one LLM model must be configured for Ollama")
 		}
-	} else if cfg.Provider == "mistral" {
+	} else if cfg.Provider == "python" {
 		if cfg.Mistral.APIBaseURL == "" {
-			return fmt.Errorf("mistral.api_base_url is required when using Mistral provider")
+			return fmt.Errorf("mistral.api_base_url is required when using Python provider")
 		}
 		if cfg.Mistral.APIKey == "" {
-			return fmt.Errorf("mistral.api_key is required when using Mistral provider")
+			return fmt.Errorf("mistral.api_key is required when using Python provider")
 		}
 		if len(cfg.Mistral.Models) == 0 {
-			return fmt.Errorf("at least one Mistral model must be configured")
+			return fmt.Errorf("at least one Mistral model must be configured for Python provider")
 		}
 	} else {
-		return fmt.Errorf("unsupported provider: %s. Use 'ollama' or 'mistral'", cfg.Provider)
+		return fmt.Errorf("unsupported provider: %s. Use 'ollama' or 'python'", cfg.Provider)
 	}
 
 	return nil

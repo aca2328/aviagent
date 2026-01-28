@@ -16,7 +16,7 @@ import (
 	"aviagent/internal/config"
 	"aviagent/internal/langfuse"
 	"aviagent/internal/llm"
-	"aviagent/internal/mistral"
+	"aviagent/internal/python"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -29,32 +29,7 @@ type LLMClient interface {
 	ProcessNaturalLanguageQuery(ctx context.Context, query, model string, tools interface{}, conversationHistory interface{}) (*llm.LLMResponse, error)
 }
 
-// convertMistralToolCalls converts Mistral ToolCalls to LLM ToolCalls
-func convertMistralToolCalls(mistralCalls []mistral.ToolCall) []llm.ToolCall {
-	llmCalls := make([]llm.ToolCall, len(mistralCalls))
-	for i, call := range mistralCalls {
-		llmCalls[i] = llm.ToolCall{
-			ID:       call.ID,
-			Type:     call.Type,
-			Function: llm.ToolCallFunction{
-				Name:      call.Function.Name,
-				Arguments: call.Function.Arguments,
-			},
-			Args: call.Args,
-		}
-	}
-	return llmCalls
-}
 
-// convertMistralUsage converts Mistral Usage to LLM Usage
-func convertMistralUsage(mistralUsage mistral.Usage) llm.Usage {
-	return llm.Usage{
-		PromptTokens:     mistralUsage.PromptTokens,
-		CompletionTokens: mistralUsage.CompletionTokens,
-		TotalTokens:      mistralUsage.TotalTokens,
-		Duration:         0, // Mistral doesn't provide duration
-	}
-}
 
 // AviClientInterface defines the interface for Avi clients
 type AviClientInterface interface {
@@ -83,7 +58,6 @@ type Server struct {
 	logger        *zap.Logger
 	aviClient     AviClientInterface
 	llmClient      LLMClient
-	mistralClient *mistral.Client
 	router        *gin.Engine
 	appName       string
 	version       string
@@ -173,15 +147,13 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 	}
 
 	// Initialize Langfuse client
-	langfuseClient, err := langfuse.NewClient(&cfg.Langfuse, logger)
-	if err != nil {
+	if _, err := langfuse.NewClient(&cfg.Langfuse, logger); err != nil {
 		logger.Error("Failed to initialize Langfuse client", zap.Error(err))
 		// Continue without Langfuse if it fails
 	}
 
 	// Initialize LLM client (fast operation)
 	var llmClient LLMClient
-	var mistralClient *mistral.Client
 
 	if cfg.Provider == "ollama" {
 		// Initialize Ollama client
@@ -191,36 +163,29 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		}
 		llmClient = ollamaClient
 		logger.Info("Initialized Ollama LLM client", zap.String("provider", "ollama"))
-	} else if cfg.Provider == "mistral" {
-		// Initialize Mistral AI client with Langfuse integration and Avi client provider
-		aviClientProvider := func() (mistral.AviClientInterface, error) {
-			client, err := server.getAviClient()
-			if err != nil {
-				return nil, err
-			}
-			// Type assertion to convert to mistral.AviClientInterface
-			if aviClient, ok := client.(mistral.AviClientInterface); ok {
-				return aviClient, nil
-			}
-			return nil, fmt.Errorf("avi client does not implement mistral.AviClientInterface")
+	} else if cfg.Provider == "python" {
+		// Initialize Python Mistral client with bridge
+		logger.Info("Initializing Python Mistral client bridge")
+		
+		// Create Python bridge
+		pythonBridge := python.NewPythonBridge(&cfg.Mistral, python.WithLogger(logger))
+		
+		// Initialize the bridge
+		if err := pythonBridge.Initialize(); err != nil {
+			return nil, fmt.Errorf("failed to initialize Python Mistral client bridge: %w", err)
 		}
 		
-		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger, langfuseClient, aviClientProvider)
-		if err != nil {
-			return nil, fmt.Errorf("failed to initialize Mistral AI client: %w", err)
-		}
-		llmClient = mistralClient
-		logger.Info("Initialized Mistral AI client with Langfuse integration and fallback support", 
-			zap.String("provider", "mistral"),
-			zap.Bool("langfuse_enabled", cfg.Langfuse.Enabled),
-			zap.Bool("fallback_enabled", true))
+		// Use Python bridge as LLM client
+		llmClient = pythonBridge
+		logger.Info("Python Mistral client bridge initialized successfully", 
+			zap.String("provider", "python"),
+			zap.Any("bridge_status", pythonBridge.GetStatus()))
 	} else {
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
 	}
 
-	// Set LLM clients (Avi client will be initialized lazily)
+	// Set LLM client (Avi client will be initialized lazily)
 	server.llmClient = llmClient
-	server.mistralClient = mistralClient
 
 	// Initialize router (doesn't depend on Avi client)
 	server.setupRouter()
@@ -685,40 +650,12 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	var convertedHistory interface{}
 	if s.config.Provider == "ollama" {
 		convertedHistory = history
-	} else if s.config.Provider == "mistral" {
-		// Convert llm.ChatMessage to mistral.ChatMessage
-		if history == nil {
-			history = []llm.ChatMessage{}
-		}
-		mistralHistory := make([]mistral.ChatMessage, len(history))
-		for i, msg := range history {
-			mistralHistory[i] = mistral.ChatMessage{
-				Role:    msg.Role,
-				Content: msg.Content,
-			}
-		}
-		convertedHistory = mistralHistory
 	}
 
 	// Get tool definitions
 	var tools interface{}
 	if s.config.Provider == "ollama" {
 		tools = llm.GetAviToolDefinitions()
-	} else if s.config.Provider == "mistral" {
-		// Convert llm.Tool to mistral.Tool
-		ollamaTools := llm.GetAviToolDefinitions()
-		mistralTools := make([]mistral.Tool, len(ollamaTools))
-		for i, tool := range ollamaTools {
-			mistralTools[i] = mistral.Tool{
-				Type:     tool.Type,
-				Function: mistral.Function{
-					Name:        tool.Function.Name,
-					Description: tool.Function.Description,
-					Parameters:  tool.Function.Parameters,
-				},
-			}
-		}
-		tools = mistralTools
 	}
 
 	// Process the message with the appropriate LLM client
@@ -727,8 +664,6 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	if err != nil {
 		if s.config.Provider == "ollama" {
 			return nil, fmt.Errorf("Ollama LLM processing failed: %w", err)
-		} else if s.config.Provider == "mistral" {
-			return nil, fmt.Errorf("Mistral AI processing failed: %w", err)
 		}
 		return nil, fmt.Errorf("LLM processing failed: %w", err)
 	}
@@ -979,9 +914,6 @@ func (s *Server) handleGetModels(c *gin.Context) {
 		ollamaClient := s.llmClient.(*llm.Client)
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
-	} else if s.config.Provider == "mistral" {
-		models = s.llmClient.GetAvailableModels()
-		defaultModel = s.config.Mistral.DefaultModel
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1000,9 +932,6 @@ func (s *Server) handleHTMXModels(c *gin.Context) {
 		ollamaClient := s.llmClient.(*llm.Client)
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
-	} else if s.config.Provider == "mistral" {
-		models = s.llmClient.GetAvailableModels()
-		defaultModel = s.config.Mistral.DefaultModel
 	}
 
 	c.HTML(http.StatusOK, "models.html", gin.H{
@@ -1032,8 +961,6 @@ func (s *Server) handleValidateModel(c *gin.Context) {
 	if s.config.Provider == "ollama" {
 		ollamaClient := s.llmClient.(*llm.Client)
 		valid, err = ollamaClient.ValidateModel(ctx, request.Model)
-	} else if s.config.Provider == "mistral" {
-		valid, err = s.llmClient.ValidateModel(ctx, request.Model)
 	}
 
 	if err != nil {
@@ -1134,14 +1061,6 @@ func (s *Server) handleHealth(c *gin.Context) {
 				status["llm_error"] = err.Error()
 			} else {
 				status["llm_status"] = "healthy"
-			}
-		} else if s.config.Provider == "mistral" {
-			// For Mistral, we can skip the actual API call and just check if we have a client
-			if s.mistralClient != nil {
-				status["llm_status"] = "healthy"
-			} else {
-				status["llm_status"] = "unhealthy"
-				status["llm_error"] = "Mistral client not initialized"
 			}
 		}
 	} else {
