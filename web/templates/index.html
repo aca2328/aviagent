@@ -12,88 +12,48 @@
 <body>
     <div class="container-fluid h-100">
         <div class="row h-100">
-            <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 sidebar">
-                <div class="sidebar-header">
-                    <h4><i class="fas fa-cloud"></i> VMware Avi</h4>
-                    <p class="text-muted">LLM Agent</p>
-                </div>
-                
-                <!-- Model Selection -->
-                <div class="model-selection mb-3">
-                    <label for="model-select" class="form-label">
-                        <i class="fas fa-robot"></i> Model
-                    </label>
-                    <select id="model-select" class="form-select" name="model">
-                        {{range .models}}
-                        <option value="{{.}}" {{if eq . $.defaultModel}}selected{{end}}>{{.}}</option>
-                        {{end}}
-                    </select>
-                </div>
-
-                <!-- Quick Actions -->
-                <div class="quick-actions">
-                    <h6><i class="fas fa-bolt"></i> Quick Actions</h6>
-                    <div class="list-group list-group-flush">
-                        <a href="#" class="list-group-item list-group-item-action quick-action" 
-                           data-query="List all virtual services">
-                            <i class="fas fa-server"></i> Virtual Services
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action quick-action" 
-                           data-query="Show me all pools with their health status">
-                            <i class="fas fa-swimming-pool"></i> Pools Status
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action quick-action" 
-                           data-query="List service engines and their status">
-                            <i class="fas fa-cogs"></i> Service Engines
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action quick-action" 
-                           data-query="Show me health monitors">
-                            <i class="fas fa-heartbeat"></i> Health Monitors
-                        </a>
-                        <a href="#" class="list-group-item list-group-item-action quick-action" 
-                           data-query="Get analytics for virtual services">
-                            <i class="fas fa-chart-line"></i> Analytics
-                        </a>
+            <!-- Header -->
+            <div class="col-12 app-header">
+                <div class="d-flex justify-content-between align-items-center p-3">
+                    <h3 class="mb-0">
+                        <i class="fas fa-cloud me-2"></i>
+                        VMware Avi LLM Agent
+                    </h3>
+                    <div class="d-flex align-items-center gap-3">
+                        <div class="connection-status">
+                            <div id="connection-indicator" class="d-flex align-items-center">
+                                <div class="status-dot me-2"></div>
+                                <small class="text-muted">Checking connection...</small>
+                            </div>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm" id="dark-mode-toggle" title="Toggle Dark Mode">
+                            <i class="fas fa-moon"></i>
+                        </button>
                     </div>
-                </div>
-
-                <!-- Connection Status -->
-                <div class="connection-status mt-3">
-                    <div id="connection-indicator" class="d-flex align-items-center">
-                        <div class="status-dot me-2"></div>
-                        <small class="text-muted">Checking connection...</small>
-                    </div>
-                </div>
-                <!-- Version Info -->
-                <div class="version-info mt-2">
-                    <small class="text-muted">Version: <span id="app-version">1.0.0</span> | Build: <span id="build-date">2026-01-01</span></small>
                 </div>
             </div>
-
-            <!-- Main Chat Area -->
-            <div class="col-md-9 col-lg-10 main-content">
-                <div class="chat-container">
+            
+            <!-- Main Content - Two Column Layout -->
+            <div class="col-12 flex-grow-1 d-flex overflow-hidden">
+                <!-- Chat Column (70%) -->
+                <div class="chat-column flex-grow-1 d-flex flex-column">
                     <!-- Chat Header -->
-                    <div class="chat-header">
+                    <div class="chat-header p-3 border-bottom">
                         <div class="d-flex justify-content-between align-items-center">
-                            <h5><i class="fas fa-comments"></i> Chat</h5>
-                            <div class="d-flex align-items-center">
-                                <button class="btn btn-outline-secondary btn-sm me-2" id="clear-chat">
+                            <h5 class="mb-0"><i class="fas fa-comments me-2"></i> Chat</h5>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-outline-secondary btn-sm" id="clear-chat">
                                     <i class="fas fa-trash"></i> Clear
                                 </button>
-                                <button class="btn btn-outline-info btn-sm me-2" id="export-chat">
+                                <button class="btn btn-outline-info btn-sm" id="export-chat">
                                     <i class="fas fa-download"></i> Export
-                                </button>
-                                <button class="btn btn-outline-secondary btn-sm" id="dark-mode-toggle" title="Toggle Dark Mode">
-                                    <i class="fas fa-moon"></i>
                                 </button>
                             </div>
                         </div>
                     </div>
-
+                    
                     <!-- Chat Messages -->
-                    <div class="chat-messages" id="chat-messages">
+                    <div class="chat-messages flex-grow-1 overflow-auto p-3" id="chat-messages">
                         <div class="welcome-message">
                             <div class="message assistant-message">
                                 <div class="message-header">
@@ -103,32 +63,19 @@
                                 <div class="message-content">
                                     <p>Hello! I'm your VMware Avi Load Balancer assistant. I can help you manage and monitor your load balancer infrastructure using natural language.</p>
                                     
-                                    <p><strong>Here are some things I can help you with:</strong></p>
-                                    <ul>
-                                        <li>📊 <strong>Virtual Services:</strong> List, create, update, delete, and scale virtual services</li>
-                                        <li>🏊 <strong>Pools:</strong> Manage backend pools and server health</li>
-                                        <li>💓 <strong>Health Monitors:</strong> Configure and monitor health checks</li>
-                                        <li>⚙️ <strong>Service Engines:</strong> Monitor service engine status and performance</li>
-                                        <li>📈 <strong>Analytics:</strong> Get performance metrics and analytics data</li>
-                                    </ul>
-                                    
                                     <p><strong>Example queries:</strong></p>
                                     <ul>
-                                        <li>"What are the current virtual services?"</li>
+                                        <li>"List all virtual services"</li>
                                         <li>"Show me pools with health issues"</li>
-                                        <li>"Create a new virtual service for my web application"</li>
-                                        <li>"Scale out the backend pool for app1"</li>
                                         <li>"Get performance metrics for the last hour"</li>
                                     </ul>
-                                    
-                                    <p>You can also use the quick actions in the sidebar or just type your question naturally!</p>
                                 </div>
                             </div>
                         </div>
                     </div>
-
+                    
                     <!-- Chat Input -->
-                    <div class="chat-input">
+                    <div class="chat-input p-3 border-top">
                         <form hx-post="/htmx/chat" 
                               hx-target="#chat-messages" 
                               hx-swap="beforeend"
@@ -140,7 +87,7 @@
                                        class="form-control" 
                                        name="message" 
                                        id="message-input"
-                                       placeholder="Ask me about your Avi Load Balancer (e.g., 'List all virtual services')"
+                                       placeholder="Ask about your Avi Load Balancer..."
                                        autocomplete="off"
                                        required>
                                 <button class="btn btn-primary" type="submit" id="send-button">
@@ -150,12 +97,61 @@
                         </form>
                         
                         <!-- Loading indicator -->
-                        <div id="loading-indicator" class="htmx-indicator">
-                            <div class="d-flex align-items-center mt-2">
+                        <div id="loading-indicator" class="htmx-indicator mt-2">
+                            <div class="d-flex align-items-center">
                                 <div class="spinner-border spinner-border-sm me-2" role="status">
                                     <span class="visually-hidden">Loading...</span>
                                 </div>
-                                <span class="text-muted">Processing your request...</span>
+                                <span class="text-muted small">Processing your request...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Logs Column (30%) -->
+                <div class="logs-column flex-grow-0" style="width: 35%; max-width: 400px;">
+                    <div class="d-flex flex-column h-100">
+                        <!-- Logs Header -->
+                        <div class="logs-header p-3 border-bottom">
+                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i> API Logs</h5>
+                            <div class="mt-2">
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="show-mistral" checked>
+                                    <label class="form-check-label small" for="show-mistral">Mistral</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="show-avi" checked>
+                                    <label class="form-check-label small" for="show-avi">Avi</label>
+                                </div>
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input" type="checkbox" id="show-system" checked>
+                                    <label class="form-check-label small" for="show-system">System</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Logs Display -->
+                        <div class="logs-display flex-grow-1 overflow-auto p-3" id="logs-display">
+                            <div class="log-entry system-log">
+                                <div class="log-header">
+                                    <span class="log-type-badge badge bg-secondary">SYSTEM</span>
+                                    <span class="log-timestamp small text-muted">{{.timestamp}}</span>
+                                </div>
+                                <div class="log-content">
+                                    Waiting for API activity...
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Logs Controls -->
+                        <div class="logs-controls p-2 border-top">
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-secondary flex-grow-1" id="clear-logs">
+                                    <i class="fas fa-trash"></i> Clear Logs
+                                </button>
+                                <button class="btn btn-sm btn-outline-secondary" id="pause-logs">
+                                    <i class="fas fa-pause"></i>
+                                </button>
                             </div>
                         </div>
                     </div>

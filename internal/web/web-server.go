@@ -192,15 +192,28 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		llmClient = ollamaClient
 		logger.Info("Initialized Ollama LLM client", zap.String("provider", "ollama"))
 	} else if cfg.Provider == "mistral" {
-		// Initialize Mistral AI client with Langfuse integration
-		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger, langfuseClient)
+		// Initialize Mistral AI client with Langfuse integration and Avi client provider
+		aviClientProvider := func() (mistral.AviClientInterface, error) {
+			client, err := server.getAviClient()
+			if err != nil {
+				return nil, err
+			}
+			// Type assertion to convert to mistral.AviClientInterface
+			if aviClient, ok := client.(mistral.AviClientInterface); ok {
+				return aviClient, nil
+			}
+			return nil, fmt.Errorf("avi client does not implement mistral.AviClientInterface")
+		}
+		
+		mistralClient, err = mistral.NewClient(&cfg.Mistral, cfg.Mistral.APIKey, logger, langfuseClient, aviClientProvider)
 		if err != nil {
 			return nil, fmt.Errorf("failed to initialize Mistral AI client: %w", err)
 		}
 		llmClient = mistralClient
-		logger.Info("Initialized Mistral AI client with Langfuse integration", 
+		logger.Info("Initialized Mistral AI client with Langfuse integration and fallback support", 
 			zap.String("provider", "mistral"),
-			zap.Bool("langfuse_enabled", cfg.Langfuse.Enabled))
+			zap.Bool("langfuse_enabled", cfg.Langfuse.Enabled),
+			zap.Bool("fallback_enabled", true))
 	} else {
 		return nil, fmt.Errorf("unsupported LLM provider: %s", cfg.Provider)
 	}
@@ -474,8 +487,8 @@ func (s *Server) handleChat(c *gin.Context) {
 		"model": request.Model,
 	})
 
-	// Validate model
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	// Validate model with longer timeout for Mistral API calls
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
 	validModel, err := s.llmClient.ValidateModel(ctx, request.Model)
@@ -511,7 +524,8 @@ func (s *Server) handleChat(c *gin.Context) {
 			"error": err.Error(),
 			"duration_ms": elapsedTime.Milliseconds(),
 		})
-		// Enhanced error response with context and suggestions
+		
+		// Enhanced error classification and specific error messages
 		errorResponse := gin.H{
 			"error": "Failed to process message",
 			"type": "error",
@@ -529,6 +543,29 @@ func (s *Server) handleChat(c *gin.Context) {
 				"If the problem persists, contact support",
 			},
 		}
+		
+		// Classify the error for better debugging
+		errorMsg := err.Error()
+		if strings.Contains(errorMsg, "context deadline exceeded") || strings.Contains(errorMsg, "timeout") {
+			errorResponse["error"] = "Request timed out while processing"
+			errorResponse["type"] = "timeout_error"
+			s.logger.Error("Timeout error in chat processing", zap.Error(err))
+		} else if strings.Contains(errorMsg, "invalid Mistral response") {
+			errorResponse["error"] = "Invalid response from AI provider"
+			errorResponse["type"] = "ai_response_error"
+			s.logger.Error("AI response validation failed", zap.Error(err))
+		} else if strings.Contains(errorMsg, "tool call") {
+			errorResponse["error"] = "Failed to execute tool calls"
+			errorResponse["type"] = "tool_execution_error"
+			s.logger.Error("Tool execution failed", zap.Error(err))
+		} else if strings.Contains(errorMsg, "Avi API") || strings.Contains(errorMsg, "avi controller") {
+			errorResponse["error"] = "Avi controller communication failed"
+			errorResponse["type"] = "avi_api_error"
+			s.logger.Error("Avi controller communication failed", zap.Error(err))
+		} else {
+			s.logger.Error("General chat processing error", zap.Error(err))
+		}
+		
 		c.JSON(http.StatusInternalServerError, errorResponse)
 		return
 	}

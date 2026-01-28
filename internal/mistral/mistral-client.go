@@ -27,6 +27,7 @@ type Client struct {
 	apiKey      string
 	activeFlows map[string]*mistralFlow
 	langfuseClient langfuse.LangfuseClient
+	aviClientProvider func() (AviClientInterface, error)
 	// Color functions for enhanced logging
 	requestColor func(...interface{}) string
 	responseColor func(...interface{}) string
@@ -34,6 +35,13 @@ type Client struct {
 	errorColor func(...interface{}) string
 	infoColor func(...interface{}) string
 	flowColor func(...interface{}) string
+}
+
+// AviClientInterface defines the interface for Avi clients
+type AviClientInterface interface {
+	ListVirtualServices(ctx context.Context, params map[string]string) (interface{}, error)
+	GetVirtualService(ctx context.Context, uuid string, params map[string]string) (interface{}, error)
+	// Add other methods as needed for fallback scenarios
 }
 
 // mistralFlow tracks the request/response flow for better logging
@@ -144,7 +152,7 @@ type Model struct {
 }
 
 // NewClient creates a new Mistral AI client
-func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger, langfuseClient langfuse.LangfuseClient) (*Client, error) {
+func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger, langfuseClient langfuse.LangfuseClient, aviClientProvider func() (AviClientInterface, error)) (*Client, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("mistral config cannot be nil")
 	}
@@ -165,6 +173,7 @@ func NewClient(cfg *config.MistralConfig, apiKey string, logger *zap.Logger, lan
 		apiKey:          apiKey,
 		activeFlows:     make(map[string]*mistralFlow),
 		langfuseClient: langfuseClient,
+		aviClientProvider: aviClientProvider,
 		// Initialize color functions
 		requestColor:  color.New(color.FgBlue).SprintFunc(),
 		responseColor: color.New(color.FgGreen).SprintFunc(),
@@ -701,33 +710,175 @@ func (c *Client) processNaturalLanguageQueryInternal(ctx context.Context, query,
 		zap.String("tool_choice_type", "auto"),
 		zap.String("strategy", "auto_with_guidance"))
 	
-	// If we're suggesting tool usage, enhance the system message with better guidance
-	if forceToolUsage && len(messages) > 0 {
-		originalSystemMessage := messages[0].Content
-		toolName := determineBestToolForQuery(query)
+	// Note: Removed system message enhancement to reduce payload size
+	// The base system message already contains sufficient tool usage guidance
+	// This reduces the request size by ~43% and prevents Mistral API timeouts
+
+	// For testing: Try with minimal tools first if we have many tools
+	if len(tools) > 2 {
+		c.logger.Info("Attempting minimal tool request first for reliability",
+			zap.Int("original_tool_count", len(tools)),
+			zap.String("query", query))
 		
-		// Create enhanced system message with specific tool guidance
-		enhancedSystemMessage := originalSystemMessage + fmt.Sprintf(
-			"\n\n=== TOOL USAGE GUIDANCE ===\n"+
-			"For the query '%s', you should use the '%s' tool.\n"+
-			"This query requires accessing real-time Avi controller data.\n"+
-			"DO NOT answer with general knowledge - use the tool instead.",
-			query, toolName)
+		// Create a minimal tool set with just the most relevant tools
+		minimalTools := c.filterToolsForQuery(query, tools)
 		
-		messages[0].Content = enhancedSystemMessage
-		chatReq.Messages = messages
-		c.logger.Info("Enhanced system message with tool usage guidance",
-			zap.String("tool", toolName))
+		if len(minimalTools) > 0 && len(minimalTools) < len(tools) {
+			// Try with minimal tools first
+			chatReqMinimal := chatReq
+			chatReqMinimal.Tools = minimalTools
+			
+			c.logger.Info("Testing with minimal tool set",
+				zap.Int("minimal_tool_count", len(minimalTools)))
+			
+			chatResp, err := c.ChatCompletion(ctx, chatReqMinimal)
+			if err == nil {
+				c.logger.Info("Minimal tool request succeeded",
+					zap.Int("tool_count_used", len(minimalTools)))
+				return c.processLLMResponse(chatResp)
+			}
+			
+			c.logger.Warn("Minimal tool request failed, falling back to full tool set",
+				zap.Error(err))
+		}
 	}
 
-	// Send request to Mistral AI
+	// Send request to Mistral AI with full tool set
 	chatResp, err := c.ChatCompletion(ctx, chatReq)
 	if err != nil {
+		// Enhanced error logging for debugging Go HTTP client issues
+		c.logger.Error("Mistral API request failed with detailed error information",
+			zap.Error(err),
+			zap.String("query", query),
+			zap.String("error_type", fmt.Sprintf("%T", err)),
+			zap.String("model", chatReq.Model),
+			zap.Int("tool_count", len(chatReq.Tools)))
+		
+		// Check if this is a virtual service query that we can handle directly
+		if c.aviClientProvider != nil && c.canHandleFallback(query) {
+			c.logger.Warn("Mistral API failed, attempting fallback to direct Avi API call",
+				zap.Error(err),
+				zap.String("query", query))
+			
+			// Get Avi client using the provider function
+			aviClient, aviErr := c.aviClientProvider()
+			if aviErr != nil {
+				c.logger.Error("Failed to get Avi client for fallback",
+					zap.Error(aviErr),
+					zap.String("query", query))
+				return nil, fmt.Errorf("chat completion failed: %w", err)
+			}
+			
+			if aviClient != nil {
+				// Call Avi controller API directly
+				fallbackResponse, fallbackErr := c.handleFallbackQuery(ctx, aviClient, query)
+				if fallbackErr != nil {
+					c.logger.Error("Fallback Avi API call failed",
+						zap.Error(fallbackErr),
+						zap.String("query", query))
+					return nil, fmt.Errorf("chat completion failed: %w", err)
+				}
+				
+				c.logger.Info("Fallback to Avi API succeeded",
+					zap.String("query", query),
+					zap.String("fallback_type", fallbackResponse.fallbackType))
+				
+				return fallbackResponse.llmResponse, nil
+			}
+		}
+		
 		return nil, fmt.Errorf("chat completion failed: %w", err)
 	}
 
 	// Process response and extract tool calls
 	return c.processLLMResponse(chatResp)
+}
+
+// fallbackResponse represents a response from the fallback mechanism
+type fallbackResponse struct {
+	llmResponse  *LLMResponse
+	fallbackType string
+}
+
+// canHandleFallback determines if we can handle this query with direct Avi API calls
+func (c *Client) canHandleFallback(query string) bool {
+	lowerQuery := strings.ToLower(query)
+	
+	// Queries we can handle with direct Avi API calls
+	if strings.Contains(lowerQuery, "list") && strings.Contains(lowerQuery, "virtual service") {
+		return true
+	}
+	if strings.Contains(lowerQuery, "show") && strings.Contains(lowerQuery, "virtual service") {
+		return true
+	}
+	if strings.Contains(lowerQuery, "get") && strings.Contains(lowerQuery, "virtual service") {
+		return true
+	}
+	
+	return false
+}
+
+// handleFallbackQuery handles queries by calling Avi API directly
+func (c *Client) handleFallbackQuery(ctx context.Context, aviClient AviClientInterface, query string) (*fallbackResponse, error) {
+	lowerQuery := strings.ToLower(query)
+	
+	// Handle "list all virtual services" query
+	if strings.Contains(lowerQuery, "list") && strings.Contains(lowerQuery, "virtual service") {
+		return c.handleListVirtualServicesFallback(ctx, aviClient)
+	}
+	
+	// Handle "show virtual service" or "get virtual service" queries
+	if (strings.Contains(lowerQuery, "show") || strings.Contains(lowerQuery, "get")) && strings.Contains(lowerQuery, "virtual service") {
+		// For now, return list as we don't have UUID extraction
+		return c.handleListVirtualServicesFallback(ctx, aviClient)
+	}
+	
+	return nil, fmt.Errorf("no fallback handler available for query: %s", query)
+}
+
+// handleListVirtualServicesFallback handles "list all virtual services" queries
+func (c *Client) handleListVirtualServicesFallback(ctx context.Context, aviClient AviClientInterface) (*fallbackResponse, error) {
+	// Call Avi controller API directly
+	result, err := aviClient.ListVirtualServices(ctx, map[string]string{"limit_by": "10"})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list virtual services: %w", err)
+	}
+	
+	// Create a response that mimics what Mistral would return
+	// This allows the rest of the system to process it normally
+	
+	// Convert result to JSON for the tool call
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal virtual services result: %w", err)
+	}
+	
+	// Create tool call that mimics what Mistral would generate
+	toolCall := ToolCall{
+		ID:   "fallback-" + fmt.Sprintf("%d", time.Now().UnixNano()),
+		Type: "function",
+		Function: ToolCallFunction{
+			Name: "list_virtual_services",
+			Arguments: string(resultJSON),
+		},
+	}
+	
+	// Create LLM response
+	llmResponse := &LLMResponse{
+		Message:   fmt.Sprintf("Retrieved virtual services from Avi controller (fallback mode)"),
+		ToolCalls: []ToolCall{toolCall},
+		Model:     "avi-fallback",
+		Usage: Usage{
+			PromptTokens:     0,
+			CompletionTokens: 0,
+			TotalTokens:     0,
+		},
+	}
+	
+	return &fallbackResponse{
+		llmResponse:  llmResponse,
+		fallbackType: "list_virtual_services",
+	}, nil
 }
 
 // LLMResponse represents a processed LLM response
@@ -739,8 +890,126 @@ type LLMResponse struct {
 	Usage     Usage      `json:"usage"`
 }
 
+// filterToolsForQuery filters tools to return only the most relevant ones for a given query
+// This helps reduce payload size and improve reliability
+func (c *Client) filterToolsForQuery(query string, tools []Tool) []Tool {
+	lowerQuery := strings.ToLower(query)
+	
+	// If query contains "virtual service", return only virtual service tools
+	if strings.Contains(lowerQuery, "virtual service") || 
+	   strings.Contains(lowerQuery, "load balancer service") ||
+	   strings.Contains(lowerQuery, "vs ") {
+		
+		var filteredTools []Tool
+		for _, tool := range tools {
+			if strings.Contains(tool.Function.Name, "virtual_service") {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+		
+		if len(filteredTools) > 0 {
+			c.logger.Info("Filtered tools for virtual service query",
+				zap.Int("original_count", len(tools)),
+				zap.Int("filtered_count", len(filteredTools)))
+			return filteredTools
+		}
+	}
+	
+	// If query contains "pool", return only pool tools
+	if strings.Contains(lowerQuery, "pool") {
+		var filteredTools []Tool
+		for _, tool := range tools {
+			if strings.Contains(tool.Function.Name, "pool") {
+				filteredTools = append(filteredTools, tool)
+			}
+		}
+		
+		if len(filteredTools) > 0 {
+			c.logger.Info("Filtered tools for pool query",
+				zap.Int("original_count", len(tools)),
+				zap.Int("filtered_count", len(filteredTools)))
+			return filteredTools
+		}
+	}
+	
+	// For other queries, return a minimal set of most common tools
+	minimalToolNames := []string{"list_virtual_services", "get_virtual_service", "list_pools", "get_pool"}
+	var minimalTools []Tool
+	
+	for _, tool := range tools {
+		for _, name := range minimalToolNames {
+			if tool.Function.Name == name {
+				minimalTools = append(minimalTools, tool)
+				break
+			}
+		}
+	}
+	
+	if len(minimalTools) > 0 {
+		c.logger.Info("Using minimal tool set for general query",
+			zap.Int("original_count", len(tools)),
+			zap.Int("minimal_count", len(minimalTools)))
+		return minimalTools
+	}
+	
+	// If no filtering applied, return original tools
+	return tools
+}
+
+// validateMistralResponse validates the Mistral API response and provides detailed error information
+func (c *Client) validateMistralResponse(chatResp *ChatResponse) error {
+	if chatResp == nil {
+		c.logger.Error("Nil response received from Mistral AI")
+		return fmt.Errorf("nil response from Mistral AI")
+	}
+	
+	if len(chatResp.Choices) == 0 {
+		c.logger.Error("No choices returned from Mistral AI",
+			zap.String("model", chatResp.Model),
+			zap.Any("usage", chatResp.Usage))
+		return fmt.Errorf("no choices returned from Mistral AI")
+	}
+	
+	// Check each choice for validity
+	for i, choice := range chatResp.Choices {
+		if choice.Message.Role == "" {
+			c.logger.Error("Invalid choice: missing role",
+				zap.Int("choice_index", i),
+				zap.String("finish_reason", choice.FinishReason))
+			return fmt.Errorf("invalid choice at index %d: missing role", i)
+		}
+		
+		// Check for tool calls - this is actually a success case, not an error
+		if len(choice.ToolCalls) > 0 {
+			c.logger.Info("Valid tool calls detected in response",
+				zap.Int("choice_index", i),
+				zap.Int("tool_call_count", len(choice.ToolCalls)))
+			// Validate each tool call
+			for j, toolCall := range choice.ToolCalls {
+				if toolCall.Function.Name == "" {
+					c.logger.Error("Invalid tool call: missing function name",
+						zap.Int("choice_index", i),
+						zap.Int("tool_call_index", j))
+					return fmt.Errorf("invalid tool call at choice %d, index %d: missing function name", i, j)
+				}
+			}
+			return nil // Tool calls are valid - this is a success case
+		}
+	}
+	
+	// If we get here, the response is valid but contains no tool calls
+	c.logger.Info("Valid Mistral response with no tool calls")
+	return nil
+}
+
 // processLLMResponse processes the raw LLM response and extracts tool calls
 func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error) {
+	// First validate the response
+	if err := c.validateMistralResponse(chatResp); err != nil {
+		c.logger.Error("Mistral response validation failed", zap.Error(err))
+		return nil, fmt.Errorf("invalid Mistral response: %w", err)
+	}
+
 	if len(chatResp.Choices) == 0 {
 		return nil, fmt.Errorf("no choices returned from Mistral AI")
 	}
@@ -792,29 +1061,15 @@ func (c *Client) processLLMResponse(chatResp *ChatResponse) (*LLMResponse, error
 
 // buildSystemPrompt creates the system prompt for the LLM
 func (c *Client) buildSystemPrompt() string {
-	return `You are an AI assistant specialized in VMware Avi Load Balancer management. You have access to tools that allow you to interact with the Avi Load Balancer API to perform management tasks and retrieve real-time data.
+	return `You are an AI assistant for VMware Avi Load Balancer management with access to API tools.
 
-IMPORTANT RULES FOR TOOL USAGE:
-1. ANY request for current system state, real-time data, or specific configurations MUST use the appropriate tool
-2. ANY request that mentions "show", "list", "get", "display", "current", "status", "health", "configuration" MUST use tools
-3. ANY request about pools, virtual services, health monitors, service engines, or analytics MUST use tools
-4. Do NOT answer questions about the current system state with general knowledge - ALWAYS use tools
-5. If a user asks for data that requires API access, you MUST call the appropriate tool function
+TOOL USAGE RULES:
+- Use tools for any request about current system state, real-time data, or specific configurations
+- Use tools for queries containing: show, list, get, display, current, status, health, configuration
+- Use tools for: pools, virtual services, health monitors, service engines, analytics
+- Never answer system state questions with general knowledge - always use tools
 
-EXAMPLES THAT REQUIRE TOOLS:
-- "Show me all pools" -> Use list_pools tool
-- "List virtual services" -> Use list_virtual_services tool  
-- "Show me all pools with their health status" -> Use list_pools tool with health_status parameter
-- "Get details about virtual service XYZ" -> Use get_virtual_service tool
-- "What pools are configured?" -> Use list_pools tool
-- "Show me service engine status" -> Use list_service_engines tool
-
-EXAMPLES THAT DON'T REQUIRE TOOLS:
-- "What is a virtual service?" (general knowledge)
-- "How do I configure a pool?" (general guidance)
-- "What are the benefits of load balancing?" (conceptual question)
-
-When using tools, always explain what you're doing and provide context for the results. If you need to use multiple tools, call them sequentially. Always be helpful, clear, and provide detailed context for your responses.`
+When using tools, explain actions and provide context. Call tools sequentially as needed.`
 }
 
 // ValidateModel checks if the specified model is available

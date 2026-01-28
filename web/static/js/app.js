@@ -81,6 +81,252 @@ function displayVersionInfo() {
         });
 }
 
+// SSE Logs Functionality
+let sseConnection = null;
+let isSseConnected = false;
+let logPauseState = false;
+
+function initializeSSELogs() {
+    const logsDisplay = document.getElementById('logs-display');
+    const pauseLogsButton = document.getElementById('pause-logs');
+    const clearLogsButton = document.getElementById('clear-logs');
+    
+    if (!logsDisplay) return;
+    
+    // Initialize SSE connection
+    connectSSE();
+    
+    // Pause/Resume logs button
+    if (pauseLogsButton) {
+        pauseLogsButton.addEventListener('click', function() {
+            logPauseState = !logPauseState;
+            const icon = pauseLogsButton.querySelector('i');
+            
+            if (logPauseState) {
+                icon.classList.remove('fa-pause');
+                icon.classList.add('fa-play');
+                pauseLogsButton.setAttribute('title', 'Resume logs');
+            } else {
+                icon.classList.remove('fa-play');
+                icon.classList.add('fa-pause');
+                pauseLogsButton.setAttribute('title', 'Pause logs');
+            }
+        });
+    }
+    
+    // Clear logs button
+    if (clearLogsButton) {
+        clearLogsButton.addEventListener('click', function() {
+            if (confirm('Are you sure you want to clear all logs?')) {
+                logsDisplay.innerHTML = '';
+                addSystemLog('Logs cleared by user');
+            }
+        });
+    }
+    
+    // Log filtering
+    setupLogFiltering();
+}
+
+function connectSSE() {
+    if (sseConnection) {
+        sseConnection.close();
+    }
+    
+    sseConnection = new EventSource('/events');
+    isSseConnected = true;
+    
+    sseConnection.onopen = function() {
+        console.log('SSE connection established');
+        addSystemLog('Connected to real-time operation logs');
+    };
+    
+    sseConnection.onmessage = function(event) {
+        if (logPauseState) return;
+        
+        try {
+            const logEntry = JSON.parse(event.data);
+            processLogEntry(logEntry);
+        } catch (error) {
+            console.error('Error parsing log entry:', error);
+        }
+    };
+    
+    sseConnection.onerror = function(error) {
+        console.error('SSE connection error:', error);
+        isSseConnected = false;
+        addSystemLog('SSE connection error: ' + error.message, true);
+        
+        // Attempt to reconnect after delay
+        setTimeout(connectSSE, 5000);
+    };
+}
+
+function processLogEntry(logEntry) {
+    const logsDisplay = document.getElementById('logs-display');
+    if (!logsDisplay) return;
+    
+    // Check if log should be displayed based on filters
+    if (shouldDisplayLog(logEntry.type)) {
+        const logElement = createLogElement(logEntry);
+        logsDisplay.appendChild(logElement);
+        
+        // Auto-scroll to bottom
+        setTimeout(() => {
+            logsDisplay.scrollTop = logsDisplay.scrollHeight;
+        }, 50);
+    }
+}
+
+function shouldDisplayLog(logType) {
+    // Check filter checkboxes
+    const showMistral = document.getElementById('show-mistral')?.checked || true;
+    const showAvi = document.getElementById('show-avi')?.checked || true;
+    const showSystem = document.getElementById('show-system')?.checked || true;
+    
+    if (logType === 'mistral_request' || logType === 'mistral_response') {
+        return showMistral;
+    } else if (logType === 'avi_request' || logType === 'avi_response') {
+        return showAvi;
+    } else {
+        return showSystem;
+    }
+}
+
+function setupLogFiltering() {
+    const filterCheckboxes = document.querySelectorAll('#logs-header input[type="checkbox"]');
+    
+    filterCheckboxes.forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            // When filters change, we could re-filter existing logs
+            // For now, just let new logs be filtered
+        });
+    });
+}
+
+function createLogElement(logEntry) {
+    const logElement = document.createElement('div');
+    
+    // Determine log type and class
+    let logTypeClass = 'system-log';
+    let logTypeText = 'SYSTEM';
+    
+    switch(logEntry.type) {
+        case 'mistral_request':
+            logTypeClass = 'mistral-request';
+            logTypeText = 'MISTRAL REQUEST';
+            break;
+        case 'mistral_response':
+            logTypeClass = 'mistral-response';
+            logTypeText = 'MISTRAL RESPONSE';
+            break;
+        case 'avi_request':
+            logTypeClass = 'avi-request';
+            logTypeText = 'AVI REQUEST';
+            break;
+        case 'avi_response':
+            logTypeClass = 'avi-response';
+            logTypeText = 'AVI RESPONSE';
+            break;
+        case 'error':
+            logTypeClass = 'error-log';
+            logTypeText = 'ERROR';
+            break;
+        default:
+            logTypeClass = 'system-log';
+            logTypeText = 'SYSTEM';
+    }
+    
+    logElement.className = 'log-entry ' + logTypeClass;
+    
+    // Create log header
+    const logHeader = document.createElement('div');
+    logHeader.className = 'log-header';
+    
+    const logTypeBadge = document.createElement('span');
+    logTypeBadge.className = 'log-type-badge badge bg-secondary';
+    logTypeBadge.textContent = logTypeText;
+    
+    const logTimestamp = document.createElement('span');
+    logTimestamp.className = 'log-timestamp small text-muted';
+    logTimestamp.textContent = logEntry.timestamp || new Date().toISOString();
+    
+    logHeader.appendChild(logTypeBadge);
+    logHeader.appendChild(logTimestamp);
+    
+    // Create log content
+    const logContent = document.createElement('div');
+    logContent.className = 'log-content';
+    
+    // Format content based on type
+    if (logEntry.message) {
+        logContent.textContent = logEntry.message;
+    }
+    
+    // Add payload if available
+    if (logEntry.payload) {
+        const payloadElement = document.createElement('pre');
+        try {
+            const formattedPayload = JSON.stringify(logEntry.payload, null, 2);
+            payloadElement.textContent = formattedPayload;
+        } catch (e) {
+            payloadElement.textContent = logEntry.payload;
+        }
+        logContent.appendChild(payloadElement);
+    }
+    
+    // Add context if available
+    if (logEntry.context) {
+        const contextElement = document.createElement('div');
+        contextElement.className = 'log-context mt-2';
+        contextElement.style.fontSize = 'var(--font-size-xs)';
+        contextElement.style.color = 'var(--color-text-secondary)';
+        contextElement.textContent = 'Context: ' + JSON.stringify(logEntry.context);
+        logContent.appendChild(contextElement);
+    }
+    
+    logElement.appendChild(logHeader);
+    logElement.appendChild(logContent);
+    
+    return logElement;
+}
+
+function addSystemLog(message, isError = false) {
+    const logsDisplay = document.getElementById('logs-display');
+    if (!logsDisplay) return;
+    
+    const logElement = document.createElement('div');
+    logElement.className = 'log-entry ' + (isError ? 'error-log' : 'system-log');
+    
+    const logHeader = document.createElement('div');
+    logHeader.className = 'log-header';
+    
+    const logTypeBadge = document.createElement('span');
+    logTypeBadge.className = 'log-type-badge badge ' + (isError ? 'bg-danger' : 'bg-secondary');
+    logTypeBadge.textContent = isError ? 'ERROR' : 'SYSTEM';
+    
+    const logTimestamp = document.createElement('span');
+    logTimestamp.className = 'log-timestamp small text-muted';
+    logTimestamp.textContent = new Date().toISOString();
+    
+    logHeader.appendChild(logTypeBadge);
+    logHeader.appendChild(logTimestamp);
+    
+    const logContent = document.createElement('div');
+    logContent.className = 'log-content';
+    logContent.textContent = message;
+    
+    logElement.appendChild(logHeader);
+    logElement.appendChild(logContent);
+    
+    logsDisplay.appendChild(logElement);
+    
+    // Auto-scroll to bottom
+    setTimeout(() => {
+        logsDisplay.scrollTop = logsDisplay.scrollHeight;
+    }, 50);
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
     // Initialize dark mode toggle
@@ -88,6 +334,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Display version information
     displayVersionInfo();
+    
+    // Initialize SSE logs
+    initializeSSELogs();
     
     // Get DOM elements once
     const messageInput = document.getElementById('message-input');
@@ -99,17 +348,6 @@ document.addEventListener('DOMContentLoaded', function() {
     if (messageInput) {
         messageInput.focus();
     }
-    
-    // Handle quick actions
-    document.querySelectorAll('.quick-action').forEach(function(element) {
-        element.addEventListener('click', function(e) {
-            e.preventDefault();
-            const query = this.getAttribute('data-query');
-            if (messageInput) {
-                messageInput.value = query;
-            }
-        });
-    });
     
     // Check connection status
     checkConnectionStatus();
@@ -262,4 +500,13 @@ function checkConnectionStatus() {
             statusText.textContent = 'Connection Failed';
             statusText.className = 'text-danger';
         });
+}
+
+// Utility function to format JSON for display
+function formatJsonForDisplay(jsonObj) {
+    try {
+        return JSON.stringify(jsonObj, null, 2);
+    } catch (e) {
+        return String(jsonObj);
+    }
 }
