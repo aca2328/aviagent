@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Logging Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+        }
+        
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .demo-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border-radius: 8px;
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .demo-section h2 {
+            color: #3498db;
+            margin-top: 0;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        .chat-demo {
+            background-color: #e8f4fc;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        
+        .log-message {
+            padding: 10px 15px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border-left: 4px solid transparent;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        .log-message.info {
+            background-color: #e3f2fd;
+            border-left-color: #2196F3;
+            color: #1976D2;
+        }
+        
+        .log-message.success {
+            background-color: #e8f5e9;
+            border-left-color: #4CAF50;
+            color: #388E3C;
+        }
+        
+        .log-message.warning {
+            background-color: #fff8e1;
+            border-left-color: #FF9800;
+            color: #F57C00;
+        }
+        
+        .log-message.error {
+            background-color: #ffebee;
+            border-left-color: #F44336;
+            color: #D32F2F;
+        }
+        
+        .log-message.system {
+            background-color: #f3e5f5;
+            border-left-color: #9C27B0;
+            color: #7B1FA2;
+            font-style: italic;
+        }
+        
+        .timestamp {
+            color: #999;
+            font-size: 12px;
+            margin-right: 10px;
+            font-weight: normal;
+        }
+        
+        .context-info {
+            font-size: 13px;
+            color: #666;
+            margin-top: 5px;
+            padding-left: 20px;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+            margin: 5px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        textarea {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: inherit;
+            font-size: 14px;
+            resize: vertical;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-connected {
+            background-color: #4CAF50;
+        }
+        
+        .status-disconnected {
+            background-color: #F44336;
+        }
+        
+        .performance-metrics {
+            background-color: #e8f4fc;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #3498db;
+        }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 10px;
+        }
+        
+        .metric-item {
+            background-color: white;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #3498db;
+            margin: 5px 0;
+        }
+        
+        .metric-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Enhanced Logging Demo</h1>
+        
+        <div class="demo-section">
+            <h2>📡 Real-Time Operation Logs (SSE)</h2>
+            <p>Connect to the Server-Sent Events endpoint to see real-time operation logging:</p>
+            
+            <div>
+                <span class="status-indicator status-disconnected" id="sseStatus"></span>
+                <span id="connectionStatus">Disconnected</span>
+            </div>
+            
+            <button onclick="connectSSE()" id="connectBtn">Connect to SSE</button>
+            <button onclick="disconnectSSE()" id="disconnectBtn" disabled>Disconnect</button>
+            <button onclick="clearLogs()">Clear Logs</button>
+            
+            <div id="logContainer" style="max-height: 400px; overflow-y: auto; margin-top: 15px;">
+                <div class="log-message system">
+                    <span class="timestamp">[System]</span> Waiting for connection...
+                </div>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>💬 Enhanced Chat Response Demo</h2>
+            <p>Send a chat message to see the enhanced response format with metadata and performance info:</p>
+            
+            <textarea id="chatMessage" placeholder="Enter your message here...">Hello, what virtual services are available?</textarea>
+            
+            <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <select id="chatModel" style="padding: 10px; border-radius: 5px; border: 1px solid #ddd; flex: 1;">
+                    <option value="mistral-medium">mistral-medium</option>
+                    <option value="mistral-small">mistral-small</option>
+                    <option value="mistral-tiny">mistral-tiny</option>
+                </select>
+                <button onclick="sendChatMessage()">Send Message</button>
+            </div>
+            
+            <div id="chatResponse" style="margin-top: 20px;">
+                <p style="text-align: center; color: #999;">Send a message to see the enhanced response</p>
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h2>📊 Features Implemented</h2>
+            <div class="performance-metrics">
+                <h3>Enhanced Logging Features</h3>
+                <div class="metrics-grid">
+                    <div class="metric-item">
+                        <div class="metric-label">Structured Responses</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Type, timestamp, context</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Real-Time SSE</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Live operation updates</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Performance Metrics</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Processing time, model info</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Error Context</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Suggestions & troubleshooting</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Operation Lifecycle</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Start → Process → Complete</div>
+                    </div>
+                    <div class="metric-item">
+                        <div class="metric-label">Help Messages</div>
+                        <div class="metric-value">✅</div>
+                        <div style="font-size: 12px; color: #666;">Contextual guidance</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // SSE Connection
+        let eventSource = null;
+        
+        function connectSSE() {
+            const logContainer = document.getElementById('logContainer');
+            
+            // Add connection message
+            addLogMessage('system', 'Connecting to SSE endpoint...', null);
+            
+            eventSource = new EventSource('http://localhost:8080/api/events');
+            
+            eventSource.onopen = function() {
+                updateConnectionStatus(true);
+                addLogMessage('system', 'Connected to real-time operation logs!', null);
+            };
+            
+            eventSource.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    addLogMessage(data.type, data.message, data);
+                } catch (error) {
+                    console.error('Error parsing SSE message:', error);
+                    addLogMessage('error', 'Failed to parse message: ' + event.data, null);
+                }
+            };
+            
+            eventSource.onerror = function(error) {
+                updateConnectionStatus(false);
+                addLogMessage('error', 'SSE connection error: ' + JSON.stringify(error), null);
+            };
+        }
+        
+        function disconnectSSE() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                updateConnectionStatus(false);
+                addLogMessage('system', 'Disconnected from SSE endpoint', null);
+            }
+        }
+        
+        function updateConnectionStatus(connected) {
+            const statusIndicator = document.getElementById('sseStatus');
+            const connectionStatus = document.getElementById('connectionStatus');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            
+            if (connected) {
+                statusIndicator.className = 'status-indicator status-connected';
+                connectionStatus.textContent = 'Connected';
+                connectionStatus.style.color = '#4CAF50';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            } else {
+                statusIndicator.className = 'status-indicator status-disconnected';
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.style.color = '#F44336';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            }
+        }
+        
+        function addLogMessage(type, message, context) {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            
+            logEntry.className = 'log-message ' + type;
+            
+            // Add timestamp
+            const timestamp = new Date().toLocaleTimeString();
+            const timestampSpan = document.createElement('span');
+            timestampSpan.className = 'timestamp';
+            timestampSpan.textContent = '[' + timestamp + ']';
+            logEntry.appendChild(timestampSpan);
+            
+            // Add message
+            const messageSpan = document.createElement('strong');
+            messageSpan.textContent = message;
+            logEntry.appendChild(messageSpan);
+            
+            // Add context if available
+            if (context && Object.keys(context).length > 0) {
+                const contextDiv = document.createElement('div');
+                contextDiv.className = 'context-info';
+                
+                for (const [key, value] of Object.entries(context)) {
+                    if (key !== 'type' && key !== 'message' && key !== 'timestamp') {
+                        const contextItem = document.createElement('div');
+                        contextItem.innerHTML = `<strong>${key}:</strong> ${JSON.stringify(value)}`;
+                        contextDiv.appendChild(contextItem);
+                    }
+                }
+                
+                logEntry.appendChild(contextDiv);
+            }
+            
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function clearLogs() {
+            const logContainer = document.getElementById('logContainer');
+            logContainer.innerHTML = '';
+            addLogMessage('system', 'Logs cleared', null);
+        }
+        
+        // Chat functionality
+        async function sendChatMessage() {
+            const message = document.getElementById('chatMessage').value;
+            const model = document.getElementById('chatModel').value;
+            const responseDiv = document.getElementById('chatResponse');
+            
+            if (!message.trim()) {
+                responseDiv.innerHTML = '<p style="color: #F44336;">Please enter a message</p>';
+                return;
+            }
+            
+            responseDiv.innerHTML = '<p style="color: #3498db;">Sending message...</p>';
+            
+            try {
+                const response = await fetch('http://localhost:8080/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        model: model
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    displayEnhancedResponse(data);
+                } else {
+                    displayErrorResponse(data);
+                }
+            } catch (error) {
+                responseDiv.innerHTML = `<div class="log-message error">
+                    <span class="timestamp">[Error]</span>
+                    <strong>Failed to send message:</strong> ${error.message}
+                </div>`;
+            }
+        }
+        
+        function displayEnhancedResponse(data) {
+            const responseDiv = document.getElementById('chatResponse');
+            
+            let html = `<div class="chat-demo">
+                <h3>📄 Enhanced Chat Response</h3>
+                
+                <div class="log-message success">
+                    <span class="timestamp">[${new Date(data.timestamp).toLocaleTimeString()}]</span>
+                    <strong>Message:</strong> ${data.message || '(empty response)'}
+                </div>`;
+            
+            if (data.performance) {
+                html += `<div class="performance-metrics" style="margin-top: 15px;">
+                    <h4>⚡ Performance Metrics</h4>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px;">
+                        <div style="background: white; padding: 8px; border-radius: 4px;">
+                            <div style="font-size: 12px; color: #666;">Processing Time</div>
+                            <div style="font-size: 18px; font-weight: bold; color: #3498db;">${data.performance.processing_time_ms} ms</div>
+                        </div>
+                        <div style="background: white; padding: 8px; border-radius: 4px;">
+                            <div style="font-size: 12px; color: #666;">Model</div>
+                            <div style="font-size: 18px; font-weight: bold; color: #3498db;">${data.performance.model}</div>
+                        </div>`;
+                
+                if (data.tool_calls) {
+                    html += `<div style="background: white; padding: 8px; border-radius: 4px;">
+                        <div style="font-size: 12px; color: #666;">Tool Calls</div>
+                        <div style="font-size: 18px; font-weight: bold; color: #3498db;">${data.tool_calls}</div>
+                    </div>`;
+                }
+                
+                html += `</div></div>`;
+            }
+            
+            if (data.help) {
+                html += `<div class="log-message info" style="margin-top: 10px;">
+                    <strong>Help:</strong> ${data.help}
+                </div>`;
+            }
+            
+            html += `<div style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 5px;">
+                <strong>Response Type:</strong> ${data.type}<br>
+                <strong>Timestamp:</strong> ${data.timestamp}
+            </div>`;
+            
+            html += `</div>`;
+            
+            responseDiv.innerHTML = html;
+        }
+        
+        function displayErrorResponse(data) {
+            const responseDiv = document.getElementById('chatResponse');
+            
+            let html = `<div class="chat-demo">
+                <h3>❌ Error Response</h3>
+                
+                <div class="log-message error">
+                    <span class="timestamp">[${new Date().toLocaleTimeString()}]</span>
+                    <strong>Error:</strong> ${data.error}
+                </div>`;
+            
+            if (data.context) {
+                html += `<div class="performance-metrics" style="margin-top: 15px;">
+                    <h4>📋 Error Context</h4>
+                    <div style="font-family: monospace; font-size: 13px; background: white; padding: 10px; border-radius: 4px;">`;
+                
+                for (const [key, value] of Object.entries(data.context)) {
+                    html += `<strong>${key}:</strong> ${JSON.stringify(value)}<br>`;
+                }
+                
+                html += `</div></div>`;
+            }
+            
+            if (data.suggestions) {
+                html += `<div class="log-message warning" style="margin-top: 10px;">
+                    <strong>Suggestions:</strong>
+                    <ul style="margin: 10px 0 0 20px; padding: 0;">`;
+                
+                data.suggestions.forEach(suggestion => {
+                    html += `<li>${suggestion}</li>`;
+                });
+                
+                html += `</ul>
+                </div>`;
+            }
+            
+            html += `</div>`;
+            
+            responseDiv.innerHTML = html;
+        }
+        
+        // Auto-connect on page load
+        window.addEventListener('load', function() {
+            // Don't auto-connect, let user initiate
+        });
+    </script>
+</body>
+</html>
