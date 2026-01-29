@@ -49,4 +49,4 @@ log:
   level: "info"
   format: "json"
 
-provider: "mistral"
+provider: "python"

@@ -1,7 +1,9 @@
 package avi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -120,9 +122,29 @@ func TestClient_makeRequest(t *testing.T) {
 		logger:     logger,
 	}
 
-	// First authenticate
-	err := client.authenticate()
+	// First authenticate - override login URL for test server
+	loginURL := server.URL + "/login"
+	authReq, err := http.NewRequest("POST", loginURL, bytes.NewBuffer([]byte(`{"username":"admin","password":"password"}`)))
 	require.NoError(t, err)
+	authReq.Header.Set("Content-Type", "application/json")
+	authReq.Header.Set("X-Avi-Version", cfg.Version)
+	
+	authResp, err := client.httpClient.Do(authReq)
+	require.NoError(t, err)
+	defer authResp.Body.Close()
+	
+	require.Equal(t, http.StatusOK, authResp.StatusCode)
+	
+	// Parse session from response
+	var session Session
+	err = json.NewDecoder(authResp.Body).Decode(&session)
+	require.NoError(t, err)
+	
+	client.session = &Session{
+		SessionID:   session.SessionID,
+		CSRFToken:   session.CSRFToken,
+		Version:     "31.2.1",
+	}
 	require.NotNil(t, client.session)
 	assert.Equal(t, "test-session-id", client.session.SessionID)
 
@@ -207,24 +229,46 @@ func TestClient_ListVirtualServices(t *testing.T) {
 		logger:     logger,
 	}
 
-	// Authenticate first
-	err := client.authenticate()
+	// Authenticate first - override login URL for test server
+	loginURL := server.URL + "/login"
+	authReq, err := http.NewRequest("POST", loginURL, bytes.NewBuffer([]byte(`{"username":"admin","password":"password"}`)))
 	require.NoError(t, err)
+	authReq.Header.Set("Content-Type", "application/json")
+	authReq.Header.Set("X-Avi-Version", cfg.Version)
+	
+	authResp, err := client.httpClient.Do(authReq)
+	require.NoError(t, err)
+	defer authResp.Body.Close()
+	
+	require.Equal(t, http.StatusOK, authResp.StatusCode)
+	
+	// Parse session from response
+	var session Session
+	err = json.NewDecoder(authResp.Body).Decode(&session)
+	require.NoError(t, err)
+	
+	client.session = &Session{
+		SessionID:   session.SessionID,
+		CSRFToken:   session.CSRFToken,
+		Version:     "31.2.1",
+	}
 
 	// Test listing all virtual services
 	result, err := client.ListVirtualServices(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, result.Count)
-	assert.Len(t, result.Results, 2)
+	apiResult := result.(*APIResponse)
+	assert.Equal(t, 2, apiResult.Count)
+	assert.Len(t, apiResult.Results, 2)
 
 	// Test listing with filter
 	result, err = client.ListVirtualServices(context.Background(), map[string]string{"name": "web-app-vs"})
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Count)
-	assert.Len(t, result.Results, 1)
+	apiResult = result.(*APIResponse)
+	assert.Equal(t, 1, apiResult.Count)
+	assert.Len(t, apiResult.Results, 1)
 	
 	// Check the returned data
-	vs := result.Results[0]
+	vs := apiResult.Results[0]
 	assert.Equal(t, "vs-uuid-1", vs["uuid"])
 	assert.Equal(t, "web-app-vs", vs["name"])
 	assert.Equal(t, true, vs["enabled"])
@@ -279,9 +323,29 @@ func TestClient_CreateVirtualService(t *testing.T) {
 		logger:     logger,
 	}
 
-	// Authenticate first
-	err := client.authenticate()
+	// Authenticate first - override login URL for test server
+	loginURL := server.URL + "/login"
+	req, err := http.NewRequest("POST", loginURL, bytes.NewBuffer([]byte(`{"username":"admin","password":"password"}`)))
 	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Avi-Version", cfg.Version)
+	
+	resp, err := client.httpClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	
+	// Parse session from response
+	var session Session
+	err = json.NewDecoder(resp.Body).Decode(&session)
+	require.NoError(t, err)
+	
+	client.session = &Session{
+		SessionID:   session.SessionID,
+		CSRFToken:   session.CSRFToken,
+		Version:     "31.2.1",
+	}
 
 	// Test creating a virtual service
 	vsData := map[string]interface{}{
@@ -294,9 +358,10 @@ func TestClient_CreateVirtualService(t *testing.T) {
 
 	result, err := client.CreateVirtualService(context.Background(), vsData)
 	require.NoError(t, err)
-	assert.Equal(t, "new-vs-uuid", result["uuid"])
-	assert.Equal(t, "new-test-vs", result["name"])
-	assert.Equal(t, true, result["enabled"])
+	resultMap := result.(map[string]interface{})
+	assert.Equal(t, "new-vs-uuid", resultMap["uuid"])
+	assert.Equal(t, "new-test-vs", resultMap["name"])
+	assert.Equal(t, true, resultMap["enabled"])
 }
 
 func TestClient_Close(t *testing.T) {

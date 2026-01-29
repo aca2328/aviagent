@@ -120,7 +120,8 @@ class PythonMistralClient:
             ]
 
             # Send request to Mistral
-            response = self.client.chat(
+            # Note: Mistral SDK API changed - use client.chat.complete() for newer versions
+            response = self.client.chat.complete(
                 model=model,
                 messages=mistral_messages,
                 tools=tools,
@@ -398,15 +399,22 @@ class PythonMistralClient:
             # Call Avi API directly
             result = avi_client.list_virtual_services(params={"limit_by": "10"})
 
+            # Convert result to dict format for parameters
+            result_dict = {
+                "count": result.get("count", 0),
+                "results": result.get("results", []),
+                "next": result.get("next", "")
+            } if isinstance(result, dict) else {"data": str(result)}
+
             # Create tool call response
             tool_call = ToolCall(
                 id=f"fallback-{uuid.uuid4()}",
                 function=ToolCallFunction(
                     name="list_virtual_services",
                     description="List virtual services from Avi controller",
-                    parameters=result
+                    parameters=result_dict
                 ),
-                args=result
+                args=result_dict
             )
 
             return LLMResponse(
@@ -449,14 +457,21 @@ class PythonMistralClient:
 
             result = avi_client.list_pools(params={"limit_by": "10"})
 
+            # Convert result to dict format for parameters
+            result_dict = {
+                "count": result.get("count", 0),
+                "results": result.get("results", []),
+                "next": result.get("next", "")
+            } if isinstance(result, dict) else {"data": str(result)}
+
             tool_call = ToolCall(
                 id=f"fallback-{uuid.uuid4()}",
                 function=ToolCallFunction(
                     name="list_pools",
                     description="List pools from Avi controller",
-                    parameters=result
+                    parameters=result_dict
                 ),
-                args=result
+                args=result_dict
             )
 
             return LLMResponse(
@@ -488,14 +503,21 @@ class PythonMistralClient:
 
             result = avi_client.list_service_engines(params={"limit_by": "10"})
 
+            # Convert result to dict format for parameters
+            result_dict = {
+                "count": result.get("count", 0),
+                "results": result.get("results", []),
+                "next": result.get("next", "")
+            } if isinstance(result, dict) else {"data": str(result)}
+
             tool_call = ToolCall(
                 id=f"fallback-{uuid.uuid4()}",
                 function=ToolCallFunction(
                     name="list_service_engines",
                     description="List service engines from Avi controller",
-                    parameters=result
+                    parameters=result_dict
                 ),
-                args=result
+                args=result_dict
             )
 
             return LLMResponse(
@@ -528,14 +550,21 @@ class PythonMistralClient:
             # Get overall system health
             result = avi_client.get_system_health()
 
+            # Convert result to dict format for parameters
+            result_dict = {
+                "status": result.get("status", "unknown"),
+                "details": result.get("details", {}),
+                "timestamp": result.get("timestamp", "")
+            } if isinstance(result, dict) else {"data": str(result)}
+
             tool_call = ToolCall(
                 id=f"fallback-{uuid.uuid4()}",
                 function=ToolCallFunction(
                     name="get_health_status",
                     description="Get system health status from Avi controller",
-                    parameters=result
+                    parameters=result_dict
                 ),
-                args=result
+                args=result_dict
             )
 
             return LLMResponse(

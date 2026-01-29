@@ -365,9 +365,15 @@ func (b *PythonBridge) callPythonBridge(command string, jsonData string) (string
 	defer b.processMutex.Unlock()
 
 	// Create Python command - use module import syntax to handle relative imports
-	// Change working directory to /app where python_mistral package is located
+	// Set working directory based on environment (Docker vs local development)
+	workingDir := "/app"
+	if _, err := os.Stat("python_mistral"); err == nil {
+		// Local development - use current directory
+		workingDir = "."
+	}
+	
 	cmd := exec.Command(b.pythonPath, "-m", "python_mistral.bridge", command, jsonData)
-	cmd.Dir = "/app" // Set working directory to /app
+	cmd.Dir = workingDir
 
 	// Set up pipes for communication
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -426,15 +432,27 @@ func (b *PythonBridge) checkPythonAvailable() error {
 // checkBridgeScriptExists checks if the bridge script exists
 func (b *PythonBridge) checkBridgeScriptExists() error {
 	// Check if the bridge module exists (using the module path)
-	modulePath := "/app/python_mistral/bridge.py"
-	if _, err := os.Stat(modulePath); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("bridge script not found at %s: %w", modulePath, err)
+	// Try both Docker path and local development path
+	modulePaths := []string{
+		"/app/python_mistral/bridge.py",  // Docker path
+		"python_mistral/bridge.py",      // Local development path
+	}
+	
+	var foundPath string
+	for _, modulePath := range modulePaths {
+		if _, err := os.Stat(modulePath); err == nil {
+			foundPath = modulePath
+			break
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("error checking bridge script at %s: %w", modulePath, err)
 		}
-		return fmt.Errorf("error checking bridge script: %w", err)
+	}
+	
+	if foundPath == "" {
+		return fmt.Errorf("bridge script not found in any expected location: %v", modulePaths)
 	}
 
-	b.logger.Info("Bridge script found", zap.String("path", modulePath))
+	b.logger.Info("Bridge script found", zap.String("path", foundPath))
 	return nil
 }
 

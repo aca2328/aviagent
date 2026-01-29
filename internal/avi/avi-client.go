@@ -409,8 +409,83 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 				zap.String("auth_method", c.authMethod),
 				zap.Int("attempt", i+1))
 
+			// Log API call headers and payload for debugging
+			logHeaders := map[string]string{
+				"Content-Type": req.Header.Get("Content-Type"),
+				"X-Avi-Version": req.Header.Get("X-Avi-Version"),
+				"X-Avi-Tenant": req.Header.Get("X-Avi-Tenant"),
+			}
+			if c.authMethod == "basic" {
+				logHeaders["Authorization"] = "Basic <redacted>"
+			} else if c.session != nil {
+				logHeaders["Cookie"] = "sessionid=<redacted>"
+			}
+			
+			// Capture payload for logging
+			var logPayload interface{}
+			if body != nil {
+				if bodyReader != nil {
+					if seeker, ok := bodyReader.(io.Seeker); ok {
+						// Save current position
+						currentPos, _ := seeker.Seek(0, io.SeekCurrent)
+						seeker.Seek(0, io.SeekStart)
+						bodyBytes, readErr := io.ReadAll(bodyReader)
+						if readErr == nil {
+							var jsonData interface{}
+							if jsonErr := json.Unmarshal(bodyBytes, &jsonData); jsonErr == nil {
+								logPayload = jsonData
+							} else {
+								logPayload = string(bodyBytes)
+							}
+						}
+						// Restore position
+						seeker.Seek(currentPos, io.SeekStart)
+					}
+				}
+			}
+			
+			c.logger.Info("Avi API request details",
+				zap.String("method", method),
+				zap.String("endpoint", endpoint),
+				zap.Any("headers", logHeaders),
+				zap.Any("payload", logPayload))
+
 			resp, err = c.httpClient.Do(req)
 			if err == nil {
+				// Log successful response details
+				responseHeaders := map[string]string{
+					"Content-Type": resp.Header.Get("Content-Type"),
+					"Content-Length": resp.Header.Get("Content-Length"),
+					"X-Avi-Version": resp.Header.Get("X-Avi-Version"),
+				}
+				
+				// Capture response body for logging (limit size for performance)
+				var responsePayload interface{}
+				if resp.ContentLength > 0 && resp.ContentLength <= 1024*1024 { // Max 1MB
+					responseBody, readErr := io.ReadAll(resp.Body)
+					if readErr == nil {
+						var jsonData interface{}
+						if jsonErr := json.Unmarshal(responseBody, &jsonData); jsonErr == nil {
+							responsePayload = jsonData
+						} else {
+							responsePayload = string(responseBody)
+						}
+						// Reset response body for later reading
+						resp.Body = io.NopCloser(bytes.NewBuffer(responseBody))
+					} else {
+						c.logger.Warn("Failed to read response body for logging", zap.Error(readErr))
+					}
+				} else if resp.ContentLength > 1024*1024 {
+					responsePayload = "<response too large for logging>"
+				}
+				
+				c.logger.Info("Avi API response details",
+					zap.String("method", method),
+					zap.String("endpoint", endpoint),
+					zap.Int("status_code", resp.StatusCode),
+					zap.Any("response_headers", responseHeaders),
+					zap.Any("response_payload", responsePayload))
+				
 				// Success, break out of retry loop
 				break
 			}

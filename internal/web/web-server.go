@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,9 +9,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"aviagent/internal/avi"
 	"aviagent/internal/config"
@@ -69,7 +74,195 @@ type Server struct {
 	ShutdownContext context.Context
 	// Operation logging for real-time visibility
 	operationLogClients map[string]chan map[string]interface{}
+	operationLogBuffer  []map[string]interface{}
 	operationLogMu      sync.Mutex
+	// Simple log buffer for API endpoint (no locking needed for reads)
+	simpleLogBuffer []map[string]interface{}
+	enhancedLogBuffer *LogBuffer
+}
+
+// EnhancedLogEntry represents a structured log entry with filtering support
+type EnhancedLogEntry struct {
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	Type      string                 `json:"type"`      // mistral_request, avi_request, user_request, etc.
+	Level     string                 `json:"level"`     // info, warn, error, debug
+	Message   string                 `json:"message"`
+	Context   map[string]interface{} `json:"context,omitempty"`   // headers, payload, etc.
+	Metadata map[string]string       `json:"metadata,omitempty"`  // additional tags
+}
+
+// LogBuffer represents an enhanced log buffer with filtering capabilities
+type LogBuffer struct {
+	entries      []EnhancedLogEntry
+	maxSize      int
+	mu           sync.RWMutex
+	sseClients   []chan EnhancedLogEntry
+	sseClientsMu sync.Mutex
+}
+
+// LogBuffer methods
+func NewLogBuffer(maxSize int) *LogBuffer {
+	return &LogBuffer{
+		entries:    make([]EnhancedLogEntry, 0, maxSize),
+		maxSize:    maxSize,
+		sseClients: make([]chan EnhancedLogEntry, 0),
+	}
+}
+
+func (b *LogBuffer) AddEntry(entry EnhancedLogEntry) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Add entry
+	b.entries = append(b.entries, entry)
+
+	// Enforce max size
+	if len(b.entries) > b.maxSize {
+		b.entries = b.entries[len(b.entries)-b.maxSize:]
+	}
+}
+
+func (b *LogBuffer) GetEntries() []EnhancedLogEntry {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	// Return a copy to avoid race conditions
+	entries := make([]EnhancedLogEntry, len(b.entries))
+	copy(entries, b.entries)
+	return entries
+}
+
+func (b *LogBuffer) GetFilteredEntries(logType, level, search string) []EnhancedLogEntry {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	var filtered []EnhancedLogEntry
+	
+	for _, entry := range b.entries {
+		// Type filter
+		if logType != "" && logType != "all" && !strings.HasPrefix(entry.Type, logType) {
+			continue
+		}
+
+		// Level filter
+		if level != "" && level != "all" && entry.Level != level {
+			continue
+		}
+
+		// Search filter
+		if search != "" {
+			searchLower := strings.ToLower(search)
+			messageMatch := strings.Contains(strings.ToLower(entry.Message), searchLower)
+			contextMatch := false
+			
+			if entry.Context != nil {
+				contextJSON, _ := json.Marshal(entry.Context)
+				contextMatch = strings.Contains(strings.ToLower(string(contextJSON)), searchLower)
+			}
+			
+			if !messageMatch && !contextMatch {
+				continue
+			}
+		}
+
+		filtered = append(filtered, entry)
+	}
+
+	return filtered
+}
+
+// LogToFile appends log entries to a file
+func (b *LogBuffer) LogToFile(filename string) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if len(b.entries) == 0 {
+		return nil
+	}
+
+	file, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open log file: %w", err)
+	}
+	defer file.Close()
+
+	for _, entry := range b.entries {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			// Skip entries that can't be marshaled
+			continue
+		}
+		if _, err := file.Write(append(data, '\n')); err != nil {
+			return fmt.Errorf("failed to write log entry: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// AddSSEClient adds an SSE client channel to receive real-time log updates
+func (b *LogBuffer) AddSSEClient(clientChan chan EnhancedLogEntry) {
+	b.sseClientsMu.Lock()
+	defer b.sseClientsMu.Unlock()
+	
+	b.sseClients = append(b.sseClients, clientChan)
+}
+
+// RemoveSSEClient removes an SSE client channel
+func (b *LogBuffer) RemoveSSEClient(clientChan chan EnhancedLogEntry) {
+	b.sseClientsMu.Lock()
+	defer b.sseClientsMu.Unlock()
+	
+	// Find and remove the client channel
+	for i, ch := range b.sseClients {
+		if ch == clientChan {
+			// Remove the channel by slicing it out
+			b.sseClients = append(b.sseClients[:i], b.sseClients[i+1:]...)
+			close(ch) // Close the channel to signal to the client
+			break
+		}
+	}
+}
+
+// BroadcastToSSEClients sends a log entry to all connected SSE clients
+func (b *LogBuffer) BroadcastToSSEClients(entry EnhancedLogEntry) {
+	b.sseClientsMu.Lock()
+	defer b.sseClientsMu.Unlock()
+	
+	// Send to all connected clients (non-blocking)
+	for _, clientChan := range b.sseClients {
+		select {
+		case clientChan <- entry:
+			// Successfully sent
+		default:
+			// Client channel full or blocked, skip this client
+		}
+	}
+}
+
+// RotateLogs performs log rotation by moving current file to archive
+func RotateLogs(currentFile, archiveDir string) error {
+	// Create archive directory if it doesn't exist
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		return fmt.Errorf("failed to create archive directory: %w", err)
+	}
+
+	// Check if current log file exists
+	if _, err := os.Stat(currentFile); os.IsNotExist(err) {
+		return nil // No file to rotate
+	}
+
+	// Generate archive filename with timestamp
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	archiveFile := filepath.Join(archiveDir, fmt.Sprintf("logs_%s.jsonl", timestamp))
+
+	// Move current file to archive
+	if err := os.Rename(currentFile, archiveFile); err != nil {
+		return fmt.Errorf("failed to rotate log file: %w", err)
+	}
+
+	return nil
 }
 
 // ChatMessage represents a chat message for the web interface
@@ -100,19 +293,22 @@ func (s *Server) getAviClient() (AviClientInterface, error) {
 			return // Already initialized
 		}
 
-		s.logger.Info("Initializing Avi client",
-			zap.String("host", s.config.Avi.Host),
-			zap.String("username", s.config.Avi.Username))
+		s.broadcastOperationLog("info", "Initializing Avi client", map[string]interface{}{
+			"host": s.config.Avi.Host,
+			"username": s.config.Avi.Username,
+		})
 
 		client, err := avi.NewClient(&s.config.Avi, s.logger)
 		if err != nil {
-			s.logger.Error("Avi client initialization failed", zap.Error(err))
+			s.broadcastOperationLog("error", "Avi client initialization failed", map[string]interface{}{
+				"error": err.Error(),
+			})
 			s.aviClientErr = fmt.Errorf("avi client initialization failed: %w", err)
 			return
 		}
 
 		s.aviClient = client
-		s.logger.Info("Avi client initialized successfully")
+		s.broadcastOperationLog("success", "Avi client initialized successfully", nil)
 	})
 
 	s.aviClientMu.Lock()
@@ -144,6 +340,8 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		buildDate:     buildDate,
 		ShutdownContext: context.Background(), // Will be updated when server starts
 		operationLogClients: make(map[string]chan map[string]interface{}),
+		simpleLogBuffer:     make([]map[string]interface{}, 0),
+		enhancedLogBuffer:   NewLogBuffer(10000), // Store up to 10,000 enhanced log entries
 	}
 
 	// Initialize Langfuse client
@@ -172,6 +370,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		
 		// Initialize the bridge
 		if err := pythonBridge.Initialize(); err != nil {
+			logger.Error("Failed to initialize Python Mistral client bridge", zap.Error(err))
 			return nil, fmt.Errorf("failed to initialize Python Mistral client bridge: %w", err)
 		}
 		
@@ -222,8 +421,55 @@ func (s *Server) broadcastOperationLog(logType, message string, context map[stri
 		}
 	}
 
-	// Send to all connected clients
+	// Create enhanced log entry for new buffer
+	enhancedEntry := EnhancedLogEntry{
+		ID:        uuid.New().String(),
+		Timestamp: time.Now(),
+		Type:      logType,
+		Level:     "info", // Default level
+		Message:   message,
+		Context:   context,
+		Metadata:  make(map[string]string),
+	}
+
+	// Detect and set appropriate log level from context
+	if err, ok := context["error"]; ok && err != nil {
+		enhancedEntry.Level = "error"
+	}
+
+	// Add to enhanced log buffer
+	s.enhancedLogBuffer.AddEntry(enhancedEntry)
+	
+	// Broadcast to SSE clients
+	s.enhancedLogBuffer.BroadcastToSSEClients(enhancedEntry)
+
+	// Add to buffer for simple log streaming (convert to map for backward compatibility)
+	s.operationLogBuffer = append(s.operationLogBuffer, logEntry)
+	// Keep buffer size reasonable (max 1000 entries)
+	if len(s.operationLogBuffer) > 1000 {
+		s.operationLogBuffer = s.operationLogBuffer[1:]
+	}
+	// Get clients snapshot while still holding the lock
+	clients := make(map[string]chan map[string]interface{})
 	for clientID, clientChan := range s.operationLogClients {
+		clients[clientID] = clientChan
+	}
+	
+	// Add to simple buffer (no locking needed for append)
+	s.simpleLogBuffer = append(s.simpleLogBuffer, logEntry)
+	// Keep buffer size reasonable (max 1000 entries)
+	if len(s.simpleLogBuffer) > 1000 {
+		s.simpleLogBuffer = s.simpleLogBuffer[1:]
+	}
+	
+	// Debug: log that we added to simple buffer
+	s.logger.Info("Added to simple log buffer", 
+		zap.String("log_type", logType),
+		zap.String("message", message),
+		zap.Int("new_buffer_size", len(s.simpleLogBuffer)))
+	
+	// Send to all connected clients (outside of lock to avoid deadlocks)
+	for clientID, clientChan := range clients {
 		select {
 		case clientChan <- logEntry:
 			// Successfully sent
@@ -233,6 +479,103 @@ func (s *Server) broadcastOperationLog(logType, message string, context map[stri
 				zap.String("client_id", clientID))
 		}
 	}
+}
+
+// logAPICall logs API call details including headers and payload
+func (s *Server) logAPICall(apiType, method, endpoint string, headers map[string]string, payload interface{}, context map[string]interface{}) {
+	// Determine the correct log type based on apiType
+	var logType string
+	if apiType == "mistral" {
+		logType = "mistral_request"
+	} else if apiType == "avi" {
+		logType = "avi_request"
+	} else {
+		// For user requests and other types, use the apiType directly
+		logType = apiType + "_request"
+	}
+
+	// Create log entry with API call details
+	logEntry := map[string]interface{}{
+		"type":    logType,
+		"message": fmt.Sprintf("%s %s", method, endpoint),
+		"method":  method,
+		"endpoint": endpoint,
+	}
+
+	// Add headers if provided
+	if headers != nil && len(headers) > 0 {
+		logEntry["headers"] = headers
+	}
+
+	// Add payload if provided
+	if payload != nil {
+		// Try to convert payload to JSON for logging
+		payloadJSON, err := json.Marshal(payload)
+		if err == nil {
+			logEntry["payload"] = string(payloadJSON)
+		} else {
+			logEntry["payload"] = fmt.Sprintf("Failed to marshal payload: %v", err)
+		}
+	}
+
+	// Add additional context if provided
+	if context != nil {
+		for key, value := range context {
+			logEntry[key] = value
+		}
+	}
+
+	// Broadcast the log entry with the correct type
+	s.broadcastOperationLog(logType, logEntry["message"].(string), logEntry)
+}
+
+// logAPIResponse logs API response details including headers and payload
+func (s *Server) logAPIResponse(apiType, method, endpoint string, statusCode int, responseHeaders map[string]string, responsePayload interface{}, context map[string]interface{}) {
+	// Determine the correct log type based on apiType
+	var logType string
+	if apiType == "mistral" {
+		logType = "mistral_response"
+	} else if apiType == "avi" {
+		logType = "avi_response"
+	} else {
+		// For user responses and other types, use the apiType directly
+		logType = apiType + "_response"
+	}
+
+	// Create log entry with API response details
+	logEntry := map[string]interface{}{
+		"type":    logType,
+		"message": fmt.Sprintf("%s %s - %d", method, endpoint, statusCode),
+		"method":  method,
+		"endpoint": endpoint,
+		"status_code": statusCode,
+	}
+
+	// Add response headers if provided
+	if responseHeaders != nil && len(responseHeaders) > 0 {
+		logEntry["response_headers"] = responseHeaders
+	}
+
+	// Add response payload if provided
+	if responsePayload != nil {
+		// Try to convert response payload to JSON for logging
+		payloadJSON, err := json.Marshal(responsePayload)
+		if err == nil {
+			logEntry["response_payload"] = string(payloadJSON)
+		} else {
+			logEntry["response_payload"] = fmt.Sprintf("Failed to marshal response payload: %v", err)
+		}
+	}
+
+	// Add additional context if provided
+	if context != nil {
+		for key, value := range context {
+			logEntry[key] = value
+		}
+	}
+
+	// Broadcast the log entry with the correct type
+	s.broadcastOperationLog(logType, logEntry["message"].(string), logEntry)
 }
 
 // initializeAviClientAsync initializes Avi client in background
@@ -386,6 +729,12 @@ func (s *Server) setupRoutes() {
 		// Server-Sent Events for real-time operation logs
 		api.GET("/events", s.handleOperationEvents)
 
+		// Simple logs endpoint for streaming
+		api.GET("/logs", s.handleGetLogs)
+
+		// Enhanced logs endpoint with filtering support
+		api.GET("/logs/enhanced", s.handleEnhancedLogs)
+
 		// Avi API proxy (for direct API access)
 		api.Any("/avi/*path", s.handleAviProxy)
 	}
@@ -409,13 +758,24 @@ func (s *Server) handleIndex(c *gin.Context) {
 	models := s.llmClient.GetAvailableModels()
 	if len(models) == 0 {
 		s.logger.Warn("No models available, using default model")
-		models = []string{s.config.LLM.DefaultModel}
+		// Use the appropriate default model based on the provider
+		if s.config.Provider == "python" {
+			models = []string{s.config.Mistral.DefaultModel}
+		} else {
+			models = []string{s.config.LLM.DefaultModel}
+		}
+	}
+
+	// Use the appropriate default model based on the provider
+	defaultModel := s.config.LLM.DefaultModel
+	if s.config.Provider == "python" {
+		defaultModel = s.config.Mistral.DefaultModel
 	}
 
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"title":        "VMware Avi LLM Agent",
 		"models":       models,
-		"defaultModel": s.config.LLM.DefaultModel,
+		"defaultModel": defaultModel,
 	})
 }
 
@@ -441,9 +801,15 @@ func (s *Server) handleChat(c *gin.Context) {
 
 	// Set default model if not specified
 	if request.Model == "" {
-		request.Model = s.config.LLM.DefaultModel
+		// Use the appropriate default model based on the provider
+		if s.config.Provider == "python" {
+			request.Model = s.config.Mistral.DefaultModel
+		} else {
+			request.Model = s.config.LLM.DefaultModel
+		}
 		s.broadcastOperationLog("info", "Using default model", map[string]interface{}{
 			"default_model": request.Model,
+			"provider":    s.config.Provider,
 		})
 	}
 
@@ -480,11 +846,18 @@ func (s *Server) handleChat(c *gin.Context) {
 
 	// Process the chat message
 	startTime := time.Now()
+	s.broadcastOperationLog("info", "Starting chat message processing", map[string]interface{}{
+		"message": request.Message,
+		"model": request.Model,
+	})
+	
 	response, err := s.processChatMessage(ctx, request.Message, request.Model, nil)
 	elapsedTime := time.Since(startTime)
 	
 	if err != nil {
-		s.logger.Error("Failed to process chat message", zap.Error(err))
+		s.broadcastOperationLog("error", "Failed to process chat message", map[string]interface{}{
+			"error": err.Error(),
+		})
 		s.broadcastOperationLog("error", "Chat processing failed", map[string]interface{}{
 			"error": err.Error(),
 			"duration_ms": elapsedTime.Milliseconds(),
@@ -514,21 +887,31 @@ func (s *Server) handleChat(c *gin.Context) {
 		if strings.Contains(errorMsg, "context deadline exceeded") || strings.Contains(errorMsg, "timeout") {
 			errorResponse["error"] = "Request timed out while processing"
 			errorResponse["type"] = "timeout_error"
-			s.logger.Error("Timeout error in chat processing", zap.Error(err))
+			s.broadcastOperationLog("error", "Timeout error in chat processing", map[string]interface{}{
+				"error": err.Error(),
+			})
 		} else if strings.Contains(errorMsg, "invalid Mistral response") {
 			errorResponse["error"] = "Invalid response from AI provider"
 			errorResponse["type"] = "ai_response_error"
-			s.logger.Error("AI response validation failed", zap.Error(err))
+			s.broadcastOperationLog("error", "AI response validation failed", map[string]interface{}{
+				"error": err.Error(),
+			})
 		} else if strings.Contains(errorMsg, "tool call") {
 			errorResponse["error"] = "Failed to execute tool calls"
 			errorResponse["type"] = "tool_execution_error"
-			s.logger.Error("Tool execution failed", zap.Error(err))
+			s.broadcastOperationLog("error", "Tool execution failed", map[string]interface{}{
+				"error": err.Error(),
+			})
 		} else if strings.Contains(errorMsg, "Avi API") || strings.Contains(errorMsg, "avi controller") {
 			errorResponse["error"] = "Avi controller communication failed"
 			errorResponse["type"] = "avi_api_error"
-			s.logger.Error("Avi controller communication failed", zap.Error(err))
+			s.broadcastOperationLog("error", "Avi controller communication failed", map[string]interface{}{
+				"error": err.Error(),
+			})
 		} else {
-			s.logger.Error("General chat processing error", zap.Error(err))
+			s.broadcastOperationLog("error", "General chat processing error", map[string]interface{}{
+				"error": err.Error(),
+			})
 		}
 		
 		c.JSON(http.StatusInternalServerError, errorResponse)
@@ -567,14 +950,25 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	model := c.PostForm("model")
 	timestamp := time.Now().Format("15:04:05")
 
-	s.logger.Info("HTMX Chat request received",
-		zap.String("message", message),
-		zap.String("model", model),
-		zap.String("user_agent", c.Request.UserAgent()),
-		zap.String("timestamp", timestamp))
+	// Log user request with headers and payload
+	userHeaders := map[string]string{
+		"User-Agent": c.Request.UserAgent(),
+		"Content-Type": c.Request.Header.Get("Content-Type"),
+		"Accept": c.Request.Header.Get("Accept"),
+		"Referer": c.Request.Referer(),
+	}
+	
+	userPayload := map[string]string{
+		"message": message,
+		"model": model,
+	}
+	
+	s.logAPICall("user", "POST", "/chat", userHeaders, userPayload, map[string]interface{}{
+		"timestamp": timestamp,
+	})
 
 	if message == "" {
-		s.logger.Warn("Empty message received in HTMX chat request")
+		s.broadcastOperationLog("warning", "Empty message received in HTMX chat request", nil)
 		c.HTML(http.StatusBadRequest, "chat.html", gin.H{
 			"error": "Message cannot be empty",
 			"timestamp": timestamp,
@@ -583,14 +977,23 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	}
 
 	if model == "" {
-		model = s.config.LLM.DefaultModel
-		s.logger.Info("Using default model", zap.String("model", model))
+		// Use the appropriate default model based on the provider
+		if s.config.Provider == "python" {
+			model = s.config.Mistral.DefaultModel
+		} else {
+			model = s.config.LLM.DefaultModel
+		}
+		s.broadcastOperationLog("info", "Using default model", map[string]interface{}{
+			"model": model,
+			"provider": s.config.Provider,
+		})
 	}
 
-	s.logger.Info("Processing HTMX chat message",
-		zap.String("message", message),
-		zap.String("model", model),
-		zap.String("timestamp", timestamp))
+	s.broadcastOperationLog("info", "Processing HTMX chat message", map[string]interface{}{
+		"message": message,
+		"model": model,
+		"timestamp": timestamp,
+	})
 
 	// Process the chat message
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
@@ -621,11 +1024,12 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	hasToolErrors := strings.Contains(response.Message, "❌")
 	
 	// Render the response as HTML
-	s.logger.Info("HTMX response ready",
-		zap.String("message", message),
-		zap.String("assistant_message", assistantMessage),
-		zap.Int("tool_calls", len(response.ToolCalls)),
-		zap.Int("response_length", len(assistantMessage)))
+	s.broadcastOperationLog("info", "HTMX response ready", map[string]interface{}{
+		"message": message,
+		"assistant_message": assistantMessage,
+		"tool_calls": len(response.ToolCalls),
+		"response_length": len(assistantMessage),
+	})
 	
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
@@ -638,10 +1042,11 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"showDebug":       true,
 	})
 	
-	s.logger.Info("HTMX chat completed successfully",
-		zap.String("message", message),
-		zap.Int("response_length", len(assistantMessage)),
-		zap.Int("tool_calls", len(response.ToolCalls)))
+	s.broadcastOperationLog("success", "HTMX chat completed successfully", map[string]interface{}{
+		"message": message,
+		"response_length": len(assistantMessage),
+		"tool_calls": len(response.ToolCalls),
+	})
 }
 
 // processChatMessage processes a chat message and returns a response
@@ -670,25 +1075,28 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 	// If there are tool calls, execute them
 	if len(llmResponse.ToolCalls) > 0 {
-		s.logger.Info("Executing tool calls",
-			zap.Int("tool_call_count", len(llmResponse.ToolCalls)))
+		s.broadcastOperationLog("info", "Executing tool calls", map[string]interface{}{
+			"tool_call_count": len(llmResponse.ToolCalls),
+		})
 		
 		var toolResults []string
 		var toolErrors []string
 		
 		for i, toolCall := range llmResponse.ToolCalls {
-			s.logger.Info("Executing tool call",
-				zap.Int("tool_call_index", i),
-				zap.String("tool_name", toolCall.Function.Name),
-				zap.String("arguments", toolCall.Function.Arguments))
+			s.broadcastOperationLog("info", "Executing tool call", map[string]interface{}{
+				"tool_call_index": i,
+				"tool_name": toolCall.Function.Name,
+				"arguments": toolCall.Function.Arguments,
+			})
 			
 			result, err := s.executeToolCall(ctx, toolCall)
 			if err != nil {
 				errorMsg := fmt.Sprintf("Tool call failed: %s - Error: %v", toolCall.Function.Name, err)
 				toolErrors = append(toolErrors, errorMsg)
-				s.logger.Error("Tool call failed", 
-					zap.String("tool", toolCall.Function.Name),
-					zap.Error(err))
+				s.broadcastOperationLog("error", "Tool call failed", map[string]interface{}{
+					"tool": toolCall.Function.Name,
+					"error": err.Error(),
+				})
 				// Continue with other tool calls even if one fails
 				continue
 			}
@@ -698,12 +1106,14 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 				resultStr := fmt.Sprintf("Tool call result: %s - Success", toolCall.Function.Name)
 				toolResults = append(toolResults, resultStr)
 				llmResponse.Message += fmt.Sprintf("\n\nAPI Result:\n```json\n%v\n```", result)
-				s.logger.Info("Tool call succeeded",
-					zap.String("tool", toolCall.Function.Name),
-					zap.Any("result", result))
+				s.broadcastOperationLog("success", "Tool call succeeded", map[string]interface{}{
+					"tool": toolCall.Function.Name,
+					"result": result,
+				})
 			} else {
-				s.logger.Warn("Tool call returned empty result",
-					zap.String("tool", toolCall.Function.Name))
+				s.broadcastOperationLog("warning", "Tool call returned empty result", map[string]interface{}{
+					"tool": toolCall.Function.Name,
+				})
 			}
 		}
 		
@@ -992,17 +1402,11 @@ func (s *Server) handleClearHistory(c *gin.Context) {
 
 // handleHealth returns health status
 func (s *Server) handleHealth(c *gin.Context) {
-	s.logger.Info("HEALTH ENDPOINT CALLED")
 	s.broadcastOperationLog("info", "Health check requested", map[string]interface{}{
 		"endpoint": "/health",
 		"app_name": s.appName,
 		"version": s.version,
 	})
-	s.logger.Info("Health check requested - DEBUG", 
-		zap.String("app_name", s.appName),
-		zap.String("version", s.version),
-		zap.String("build_date", s.buildDate),
-		zap.String("server_ptr", fmt.Sprintf("%p", s)))
 	
 	ctx := c.Request.Context()
 	
@@ -1013,7 +1417,6 @@ func (s *Server) handleHealth(c *gin.Context) {
 		"version": s.version,
 		"build_date": s.buildDate,
 		"app_name": s.appName,
-		"debug_server_ptr": fmt.Sprintf("%p", s),
 	}
 
 	// Check Avi client status
@@ -1140,10 +1543,221 @@ func (s *Server) handleOperationEvents(c *gin.Context) {
 	}
 }
 
+// handleGetLogs provides simple log streaming endpoint
+func (s *Server) handleGetLogs(c *gin.Context) {
+	// Debug: log buffer status
+	s.logger.Info("handleGetLogs called", zap.Int("simple_log_buffer_size", len(s.simpleLogBuffer)))
+	
+	// Get logs from the simple log buffer (no locking needed)
+	var logs []map[string]interface{}
+	for _, logEntry := range s.simpleLogBuffer {
+		// Create a copy to avoid race conditions
+		logCopy := make(map[string]interface{})
+		for key, value := range logEntry {
+			logCopy[key] = value
+		}
+		logs = append(logs, logCopy)
+	}
+	
+	// Return logs as JSON
+	c.JSON(http.StatusOK, logs)
+}
+
+// handleEnhancedLogs provides filtered log retrieval and SSE streaming
+func (s *Server) handleEnhancedLogs(c *gin.Context) {
+	// Get filter parameters
+	logType := c.Query("type")
+	level := c.Query("level")
+	search := c.Query("search")
+	limit := 1000 // Default limit
+	
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	// Check if this is an SSE request
+	if c.GetHeader("Accept") == "text/event-stream" {
+		// SSE streaming mode
+		s.handleEnhancedLogsSSE(c, logType, level, search)
+		return
+	}
+
+	// Regular HTTP mode - return filtered logs
+	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search)
+	
+	// Apply limit
+	if len(entries) > limit {
+		entries = entries[:limit]
+	}
+
+	// Return logs as JSON
+	c.JSON(http.StatusOK, entries)
+}
+
+// handleEnhancedLogsSSE provides Server-Sent Events with filtering
+func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search string) {
+	// Set SSE headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+
+	// Send existing logs that match filters
+	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search)
+	for _, entry := range entries {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			s.logger.Error("Failed to marshal log entry for SSE", zap.Error(err))
+			continue
+		}
+		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
+		c.Writer.Flush()
+	}
+
+	// Set up a channel to receive new log entries
+	logChan := make(chan EnhancedLogEntry, 100)
+	
+	// Register this SSE connection to receive real-time log updates
+	s.enhancedLogBuffer.AddSSEClient(logChan)
+	defer s.enhancedLogBuffer.RemoveSSEClient(logChan)
+	
+	// Stream new log entries in real-time
+	for {
+		select {
+		case newEntry := <-logChan:
+			// Apply filters to new entries
+			if s.matchesFilters(newEntry, logType, level, search) {
+				data, err := json.Marshal(newEntry)
+				if err != nil {
+					s.logger.Error("Failed to marshal new log entry for SSE", zap.Error(err))
+					continue
+				}
+				fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
+				c.Writer.Flush()
+			}
+		case <-c.Request.Context().Done():
+			// Client disconnected
+			return
+		}
+	}
+}
+
+// matchesFilters checks if a log entry matches the given filters
+func (s *Server) matchesFilters(entry EnhancedLogEntry, logType, level, search string) bool {
+	// Type filter
+	if logType != "" && logType != "all" && !strings.HasPrefix(entry.Type, logType) {
+		return false
+	}
+
+	// Level filter
+	if level != "" && level != "all" && entry.Level != level {
+		return false
+	}
+
+	// Search filter
+	if search != "" {
+		searchLower := strings.ToLower(search)
+		messageMatch := strings.Contains(strings.ToLower(entry.Message), searchLower)
+		contextMatch := false
+		
+		if entry.Context != nil {
+			contextJSON, _ := json.Marshal(entry.Context)
+			contextMatch = strings.Contains(strings.ToLower(string(contextJSON)), searchLower)
+		}
+		
+		if !messageMatch && !contextMatch {
+			return false
+		}
+	}
+
+	return true
+}
+
+// removeLogClient removes a client channel from the operation log clients
+func (s *Server) removeLogClient(clientChan chan map[string]interface{}) {
+	s.operationLogMu.Lock()
+	defer s.operationLogMu.Unlock()
+	
+	for clientID, clientChanEntry := range s.operationLogClients {
+		if clientChanEntry == clientChan {
+			delete(s.operationLogClients, clientID)
+			close(clientChan)
+			break
+		}
+	}
+}
+
+// StartLogPersistence starts a background goroutine to periodically save logs to file
+func (s *Server) StartLogPersistence(logFile, archiveDir string, interval time.Duration) {
+	if interval <= 0 {
+		interval = 5 * time.Minute // Default interval
+	}
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// Save current logs to file
+				if err := s.enhancedLogBuffer.LogToFile(logFile); err != nil {
+					s.logger.Error("Failed to save logs to file", zap.Error(err))
+				}
+
+				// Rotate logs if file gets too large
+				if fileInfo, err := os.Stat(logFile); err == nil && fileInfo.Size() > 10*1024*1024 {
+					// File is larger than 10MB, rotate it
+					if err := RotateLogs(logFile, archiveDir); err != nil {
+						s.logger.Error("Failed to rotate log file", zap.Error(err))
+					}
+				}
+
+			case <-s.ShutdownContext.Done():
+				// Server is shutting down, save final logs
+				if err := s.enhancedLogBuffer.LogToFile(logFile); err != nil {
+					s.logger.Error("Failed to save final logs on shutdown", zap.Error(err))
+				}
+				return
+			}
+		}
+	}()
+}
+
 // handleAviProxy provides direct access to Avi API (for advanced users)
 func (s *Server) handleAviProxy(c *gin.Context) {
 	path := c.Param("path")
 	method := c.Request.Method
+
+	// Log Avi proxy request with proper typing
+	aviHeaders := map[string]string{
+		"User-Agent": c.Request.UserAgent(),
+		"Content-Type": c.Request.Header.Get("Content-Type"),
+		"Accept": c.Request.Header.Get("Accept"),
+	}
+	
+	// Capture body if present
+	var aviPayload interface{}
+	if c.Request.Body != nil {
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err == nil {
+			// Try to parse as JSON
+			var jsonData interface{}
+			if jsonErr := json.Unmarshal(bodyBytes, &jsonData); jsonErr == nil {
+				aviPayload = jsonData
+			} else {
+				aviPayload = string(bodyBytes)
+			}
+			// Reset body for later reading
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		}
+	}
+	
+	s.logAPICall("avi", method, "/avi/"+path, aviHeaders, aviPayload, map[string]interface{}{
+		"proxy": true,
+	})
 
 	// Parse parameters
 	params := make(map[string]string)
@@ -1157,6 +1771,9 @@ func (s *Server) handleAviProxy(c *gin.Context) {
 	var body interface{}
 	if method == "POST" || method == "PUT" || method == "PATCH" {
 		if err := c.ShouldBindJSON(&body); err != nil && err != io.EOF {
+			s.broadcastOperationLog("error", "Invalid request body", map[string]interface{}{
+				"error": err.Error(),
+			})
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -1165,16 +1782,35 @@ func (s *Server) handleAviProxy(c *gin.Context) {
 	// Execute the operation with context (using lazy Avi client initialization)
 	aviClient, err := s.getAviClient()
 	if err != nil {
+		s.broadcastOperationLog("error", "Avi client not available", map[string]interface{}{
+			"error": err.Error(),
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Avi client not available: " + err.Error()})
 		return
 	}
 	
+	s.broadcastOperationLog("info", "Executing Avi operation", map[string]interface{}{
+		"method": method,
+		"path": path,
+		"params": params,
+	})
+	
 	result, err := aviClient.ExecuteGenericOperation(c.Request.Context(), method, path, body, params)
 	if err != nil {
+		s.broadcastOperationLog("error", "Avi operation failed", map[string]interface{}{
+			"method": method,
+			"path": path,
+			"error": err.Error(),
+		})
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	s.broadcastOperationLog("success", "Avi operation completed", map[string]interface{}{
+		"method": method,
+		"path": path,
+	})
+	
 	c.JSON(http.StatusOK, result)
 }
 

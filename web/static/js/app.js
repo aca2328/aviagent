@@ -81,9 +81,7 @@ function displayVersionInfo() {
         });
 }
 
-// SSE Logs Functionality
-let sseConnection = null;
-let isSseConnected = false;
+// Simple Log Streaming
 let logPauseState = false;
 
 function initializeSSELogs() {
@@ -93,8 +91,8 @@ function initializeSSELogs() {
     
     if (!logsDisplay) return;
     
-    // Initialize SSE connection
-    connectSSE();
+    // Start simple log streaming
+    startLogStreaming();
     
     // Pause/Resume logs button
     if (pauseLogsButton) {
@@ -128,38 +126,32 @@ function initializeSSELogs() {
     setupLogFiltering();
 }
 
-function connectSSE() {
-    if (sseConnection) {
-        sseConnection.close();
-    }
+// Simple log streaming - just fetch and display logs periodically
+function startLogStreaming() {
+    // Fetch logs every 2 seconds
+    setInterval(fetchLogs, 2000);
+}
+
+function fetchLogs() {
+    if (logPauseState) return;
     
-    sseConnection = new EventSource('/events');
-    isSseConnected = true;
-    
-    sseConnection.onopen = function() {
-        console.log('SSE connection established');
-        addSystemLog('Connected to real-time operation logs');
-    };
-    
-    sseConnection.onmessage = function(event) {
-        if (logPauseState) return;
-        
-        try {
-            const logEntry = JSON.parse(event.data);
-            processLogEntry(logEntry);
-        } catch (error) {
-            console.error('Error parsing log entry:', error);
-        }
-    };
-    
-    sseConnection.onerror = function(error) {
-        console.error('SSE connection error:', error);
-        isSseConnected = false;
-        addSystemLog('SSE connection error: ' + error.message, true);
-        
-        // Attempt to reconnect after delay
-        setTimeout(connectSSE, 5000);
-    };
+    // Fetch logs from server
+    fetch('/api/logs')
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch logs');
+            }
+            return response.json();
+        })
+        .then(logs => {
+            // Process and display logs
+            logs.forEach(logEntry => {
+                processLogEntry(logEntry);
+            });
+        })
+        .catch(error => {
+            console.error('Error fetching logs:', error);
+        });
 }
 
 function processLogEntry(logEntry) {
@@ -167,7 +159,7 @@ function processLogEntry(logEntry) {
     if (!logsDisplay) return;
     
     // Check if log should be displayed based on filters
-    if (shouldDisplayLog(logEntry.type)) {
+    if (shouldDisplayLog(logEntry)) {
         const logElement = createLogElement(logEntry);
         logsDisplay.appendChild(logElement);
         
@@ -178,11 +170,22 @@ function processLogEntry(logEntry) {
     }
 }
 
-function shouldDisplayLog(logType) {
+function shouldDisplayLog(logEntry) {
+    // First, filter out health check logs
+    if (logEntry.message && logEntry.message.includes("Health check requested")) {
+        return false;
+    }
+    
+    if (logEntry.endpoint === "/health") {
+        return false;
+    }
+    
     // Check filter checkboxes
     const showMistral = document.getElementById('show-mistral')?.checked || true;
     const showAvi = document.getElementById('show-avi')?.checked || true;
     const showSystem = document.getElementById('show-system')?.checked || true;
+    
+    const logType = logEntry.type;
     
     if (logType === 'mistral_request' || logType === 'mistral_response') {
         return showMistral;
@@ -210,31 +213,48 @@ function createLogElement(logEntry) {
     // Determine log type and class
     let logTypeClass = 'system-log';
     let logTypeText = 'SYSTEM';
+    let logIcon = 'fa-info-circle';
     
     switch(logEntry.type) {
         case 'mistral_request':
             logTypeClass = 'mistral-request';
             logTypeText = 'MISTRAL REQUEST';
+            logIcon = 'fa-robot';
             break;
         case 'mistral_response':
             logTypeClass = 'mistral-response';
             logTypeText = 'MISTRAL RESPONSE';
+            logIcon = 'fa-robot';
             break;
         case 'avi_request':
             logTypeClass = 'avi-request';
             logTypeText = 'AVI REQUEST';
+            logIcon = 'fa-server';
             break;
         case 'avi_response':
             logTypeClass = 'avi-response';
             logTypeText = 'AVI RESPONSE';
+            logIcon = 'fa-server';
             break;
         case 'error':
             logTypeClass = 'error-log';
             logTypeText = 'ERROR';
+            logIcon = 'fa-exclamation-triangle';
+            break;
+        case 'success':
+            logTypeClass = 'success-log';
+            logTypeText = 'SUCCESS';
+            logIcon = 'fa-check-circle';
+            break;
+        case 'warning':
+            logTypeClass = 'warning-log';
+            logTypeText = 'WARNING';
+            logIcon = 'fa-exclamation-circle';
             break;
         default:
             logTypeClass = 'system-log';
             logTypeText = 'SYSTEM';
+            logIcon = 'fa-info-circle';
     }
     
     logElement.className = 'log-entry ' + logTypeClass;
@@ -245,44 +265,230 @@ function createLogElement(logEntry) {
     
     const logTypeBadge = document.createElement('span');
     logTypeBadge.className = 'log-type-badge badge bg-secondary';
-    logTypeBadge.textContent = logTypeText;
+    logTypeBadge.innerHTML = `<i class="fas ${logIcon}"></i> ${logTypeText}`;
     
     const logTimestamp = document.createElement('span');
     logTimestamp.className = 'log-timestamp small text-muted';
     logTimestamp.textContent = logEntry.timestamp || new Date().toISOString();
     
     logHeader.appendChild(logTypeBadge);
+    
+    // Add status code for response logs
+    if (logEntry.status_code) {
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'log-status-badge badge ms-2';
+        
+        const statusCode = logEntry.status_code;
+        if (statusCode >= 200 && statusCode < 300) {
+            statusBadge.classList.add('bg-success');
+        } else if (statusCode >= 300 && statusCode < 400) {
+            statusBadge.classList.add('bg-warning');
+        } else if (statusCode >= 400 && statusCode < 500) {
+            statusBadge.classList.add('bg-danger');
+        } else if (statusCode >= 500) {
+            statusBadge.classList.add('bg-danger');
+        } else {
+            statusBadge.classList.add('bg-secondary');
+        }
+        
+        statusBadge.textContent = statusCode;
+        logHeader.appendChild(statusBadge);
+    }
+    
     logHeader.appendChild(logTimestamp);
     
     // Create log content
     const logContent = document.createElement('div');
     logContent.className = 'log-content';
     
-    // Format content based on type
+    // Main message
     if (logEntry.message) {
-        logContent.textContent = logEntry.message;
+        const messageElement = document.createElement('div');
+        messageElement.className = 'log-message';
+        messageElement.textContent = logEntry.message;
+        logContent.appendChild(messageElement);
     }
     
     // Add payload if available
     if (logEntry.payload) {
+        const payloadSection = document.createElement('div');
+        payloadSection.className = 'log-payload mt-2';
+        
+        const payloadTitle = document.createElement('strong');
+        payloadTitle.textContent = 'Payload:';
+        payloadSection.appendChild(payloadTitle);
+        
         const payloadElement = document.createElement('pre');
+        payloadElement.className = 'log-payload-content';
         try {
             const formattedPayload = JSON.stringify(logEntry.payload, null, 2);
             payloadElement.textContent = formattedPayload;
         } catch (e) {
             payloadElement.textContent = logEntry.payload;
         }
-        logContent.appendChild(payloadElement);
+        payloadSection.appendChild(payloadElement);
+        logContent.appendChild(payloadSection);
     }
     
-    // Add context if available
-    if (logEntry.context) {
-        const contextElement = document.createElement('div');
-        contextElement.className = 'log-context mt-2';
-        contextElement.style.fontSize = 'var(--font-size-xs)';
-        contextElement.style.color = 'var(--color-text-secondary)';
-        contextElement.textContent = 'Context: ' + JSON.stringify(logEntry.context);
-        logContent.appendChild(contextElement);
+    // Add headers if available
+    if (logEntry.headers) {
+        const headersSection = document.createElement('div');
+        headersSection.className = 'log-headers mt-2';
+        
+        const headersTitle = document.createElement('strong');
+        headersTitle.textContent = 'Request Headers:';
+        headersSection.appendChild(headersTitle);
+        
+        const headersDetails = document.createElement('div');
+        headersDetails.className = 'log-headers-details';
+        
+        for (const [key, value] of Object.entries(logEntry.headers)) {
+            const headerItem = document.createElement('div');
+            headerItem.className = 'log-header-item';
+            
+            const headerKey = document.createElement('span');
+            headerKey.className = 'log-header-key';
+            headerKey.textContent = `${key}: `;
+            
+            const headerValue = document.createElement('span');
+            headerValue.className = 'log-header-value';
+            headerValue.textContent = String(value);
+            
+            headerItem.appendChild(headerKey);
+            headerItem.appendChild(headerValue);
+            headersDetails.appendChild(headerItem);
+        }
+        
+        headersSection.appendChild(headersDetails);
+        logContent.appendChild(headersSection);
+    }
+    
+    // Add response headers if available
+    if (logEntry.response_headers) {
+        const responseHeadersSection = document.createElement('div');
+        responseHeadersSection.className = 'log-response-headers mt-2';
+        
+        const responseHeadersTitle = document.createElement('strong');
+        responseHeadersTitle.textContent = 'Response Headers:';
+        responseHeadersSection.appendChild(responseHeadersTitle);
+        
+        const responseHeadersDetails = document.createElement('div');
+        responseHeadersDetails.className = 'log-headers-details';
+        
+        for (const [key, value] of Object.entries(logEntry.response_headers)) {
+            const headerItem = document.createElement('div');
+            headerItem.className = 'log-header-item';
+            
+            const headerKey = document.createElement('span');
+            headerKey.className = 'log-header-key';
+            headerKey.textContent = `${key}: `;
+            
+            const headerValue = document.createElement('span');
+            headerValue.className = 'log-header-value';
+            headerValue.textContent = String(value);
+            
+            headerItem.appendChild(headerKey);
+            headerItem.appendChild(headerValue);
+            responseHeadersDetails.appendChild(headerItem);
+        }
+        
+        responseHeadersSection.appendChild(responseHeadersDetails);
+        logContent.appendChild(responseHeadersSection);
+    }
+    
+    // Add response payload if available
+    if (logEntry.response_payload) {
+        const responsePayloadSection = document.createElement('div');
+        responsePayloadSection.className = 'log-response-payload mt-2';
+        
+        const responsePayloadTitle = document.createElement('strong');
+        responsePayloadTitle.textContent = 'Response Payload:';
+        responsePayloadSection.appendChild(responsePayloadTitle);
+        
+        const responsePayloadElement = document.createElement('pre');
+        responsePayloadElement.className = 'log-payload-content';
+        try {
+            const formattedPayload = JSON.stringify(logEntry.response_payload, null, 2);
+            responsePayloadElement.textContent = formattedPayload;
+        } catch (e) {
+            responsePayloadElement.textContent = logEntry.response_payload;
+        }
+        responsePayloadSection.appendChild(responsePayloadElement);
+        logContent.appendChild(responsePayloadSection);
+    }
+    
+    // Add context if available - display as structured details
+    if (logEntry.context && Object.keys(logEntry.context).length > 0) {
+        const contextSection = document.createElement('div');
+        contextSection.className = 'log-context mt-2';
+        
+        const contextTitle = document.createElement('strong');
+        contextTitle.textContent = 'Details:';
+        contextSection.appendChild(contextTitle);
+        
+        const contextDetails = document.createElement('div');
+        contextDetails.className = 'log-context-details';
+        
+        // Display context as key-value pairs for better readability
+        for (const [key, value] of Object.entries(logEntry.context)) {
+            const detailItem = document.createElement('div');
+            detailItem.className = 'log-context-item';
+            
+            const detailKey = document.createElement('span');
+            detailKey.className = 'log-context-key';
+            detailKey.textContent = `${key}: `;
+            
+            const detailValue = document.createElement('span');
+            detailValue.className = 'log-context-value';
+            
+            if (typeof value === 'object' && value !== null) {
+                try {
+                    detailValue.textContent = JSON.stringify(value);
+                } catch (e) {
+                    detailValue.textContent = String(value);
+                }
+            } else {
+                detailValue.textContent = String(value);
+            }
+            
+            detailItem.appendChild(detailKey);
+            detailItem.appendChild(detailValue);
+            contextDetails.appendChild(detailItem);
+        }
+        
+        contextSection.appendChild(contextDetails);
+        logContent.appendChild(contextSection);
+    }
+    
+    // Add any additional fields dynamically
+    const additionalFields = ['model', 'duration', 'status', 'error', 'tool', 'tool_call_index', 'tool_name', 'arguments'];
+    const addedFields = new Set(['type', 'message', 'timestamp', 'payload', 'context']);
+    
+    for (const field of additionalFields) {
+        if (logEntry[field] !== undefined && !addedFields.has(field)) {
+            const fieldElement = document.createElement('div');
+            fieldElement.className = 'log-additional-field mt-1';
+            
+            const fieldKey = document.createElement('strong');
+            fieldKey.textContent = `${field.charAt(0).toUpperCase() + field.slice(1)}: `;
+            
+            const fieldValue = document.createElement('span');
+            if (typeof logEntry[field] === 'object') {
+                try {
+                    fieldValue.textContent = JSON.stringify(logEntry[field]);
+                } catch (e) {
+                    fieldValue.textContent = String(logEntry[field]);
+                }
+            } else {
+                fieldValue.textContent = String(logEntry[field]);
+            }
+            
+            fieldElement.appendChild(fieldKey);
+            fieldElement.appendChild(fieldValue);
+            logContent.appendChild(fieldElement);
+            
+            addedFields.add(field);
+        }
     }
     
     logElement.appendChild(logHeader);
@@ -454,16 +660,137 @@ function initializeWindowResizeHandling() {
     });
 }
 
+// Enhanced log filtering functionality
+function initializeEnhancedLogFiltering() {
+    console.log('initializeEnhancedLogFiltering called');
+    
+    // Try to find enhanced filtering elements
+    const typeFilter = document.getElementById('log-type-filter');
+    const levelFilter = document.getElementById('log-level-filter');
+    const searchInput = document.getElementById('log-search');
+    const clearSearchBtn = document.getElementById('clear-search');
+    const clearFiltersBtn = document.getElementById('clear-filters');
+    
+    console.log('Filter elements found:', {
+        typeFilter: !!typeFilter,
+        levelFilter: !!levelFilter,
+        searchInput: !!searchInput,
+        clearSearchBtn: !!clearSearchBtn,
+        clearFiltersBtn: !!clearFiltersBtn
+    });
+    
+    // Check if we have the enhanced filtering UI
+    const hasEnhancedFiltering = typeFilter && levelFilter && searchInput;
+    
+    console.log('Enhanced log filtering available:', hasEnhancedFiltering);
+    
+    // FORCE ENHANCED FILTERING FOR TESTING
+    // Comment this out when done testing
+    console.log('FORCING ENHANCED FILTERING FOR TESTING');
+    return true; // Force enhanced filtering
+    
+    if (!hasEnhancedFiltering) {
+        console.log('Enhanced filtering UI not found, using legacy system');
+        return false; // Enhanced filtering not available
+    }
+    
+    // Store the current EventSource connection
+    let currentEventSource = null;
+    
+    // Connect to enhanced logs endpoint
+    function connectEnhancedLogs() {
+        // Disconnect any existing connection
+        if (currentEventSource) {
+            currentEventSource.close();
+        }
+        
+        const logType = typeFilter.value;
+        const level = levelFilter.value;
+        const search = searchInput.value;
+        
+        const url = `/api/logs/enhanced?type=${logType}&level=${level}&search=${encodeURIComponent(search)}`;
+        console.log('Connecting to URL:', url);
+        
+        console.log('Connecting to enhanced logs SSE:', url);
+        
+        // Use EventSource for SSE
+        currentEventSource = new EventSource(url);
+        
+        currentEventSource.onopen = function() {
+            console.log('Enhanced logs SSE connection established');
+        };
+        
+        currentEventSource.onmessage = function(e) {
+            const log = JSON.parse(e.data);
+            processLogEntry(log);
+        };
+        
+        currentEventSource.onerror = function(error) {
+            console.error("Enhanced logs EventSource error:", error);
+            // Don't fallback to legacy - let the enhanced system handle reconnection
+            setTimeout(connectEnhancedLogs, 2000); // Reconnect after delay
+        };
+    }
+    
+    // Clear search input
+    clearSearchBtn.addEventListener('click', function() {
+        searchInput.value = '';
+        connectEnhancedLogs();
+    });
+    
+    // Clear all filters
+    clearFiltersBtn.addEventListener('click', function() {
+        typeFilter.value = 'all';
+        levelFilter.value = 'all';
+        searchInput.value = '';
+        connectEnhancedLogs();
+    });
+    
+    // Debounced search
+    let searchTimeout;
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(connectEnhancedLogs, 500);
+    });
+    
+    // Filter changes
+    typeFilter.addEventListener('change', connectEnhancedLogs);
+    levelFilter.addEventListener('change', connectEnhancedLogs);
+    
+    // Initial connection
+    connectEnhancedLogs();
+    
+    console.log('Enhanced log filtering initialized successfully');
+    return true; // Enhanced filtering is active
+}
+
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    // Initialize dark mode toggle
-    initializeDarkModeToggle();
+    console.log('DOMContentLoaded event fired');
+    
+    // Small delay to ensure DOM is fully ready
+    setTimeout(function() {
+        // Initialize dark mode toggle
+        initializeDarkModeToggle();
     
     // Display version information
     displayVersionInfo();
     
-    // Initialize SSE logs
-    initializeSSELogs();
+    // Initialize tooltips for API logs link
+    initializeTooltips();
+    
+    // Initialize enhanced log filtering if available
+    const enhancedFilteringActive = initializeEnhancedLogFiltering();
+    
+    console.log('Enhanced filtering active:', enhancedFilteringActive);
+    
+    // Initialize SSE logs (fallback) only if enhanced filtering is not active
+    if (!enhancedFilteringActive) {
+        console.log('Using legacy log system');
+        initializeSSELogs();
+    } else {
+        console.log('Using enhanced log system - legacy system disabled');
+    }
     
     // Initialize column resizing
     initializeColumnResizing();
@@ -633,6 +960,47 @@ function checkConnectionStatus() {
             statusText.textContent = 'Connection Failed';
             statusText.className = 'text-danger';
         });
+}
+
+// Initialize tooltips for UI elements
+function initializeTooltips() {
+    const tooltipElements = document.querySelectorAll('[title]');
+    
+    tooltipElements.forEach(element => {
+        // Simple tooltip implementation
+        element.addEventListener('mouseenter', function() {
+            const title = this.getAttribute('title');
+            if (title) {
+                const tooltip = document.createElement('div');
+                tooltip.className = 'custom-tooltip';
+                tooltip.textContent = title;
+                tooltip.style.position = 'absolute';
+                tooltip.style.backgroundColor = 'rgba(var(--color-slate-900-rgb), 0.9)';
+                tooltip.style.color = 'var(--color-white)';
+                tooltip.style.padding = '0.25rem 0.5rem';
+                tooltip.style.borderRadius = 'var(--border-radius-sm)';
+                tooltip.style.fontSize = 'var(--font-size-xs)';
+                tooltip.style.zIndex = '1000';
+                tooltip.style.whiteSpace = 'nowrap';
+                tooltip.style.pointerEvents = 'none';
+                
+                document.body.appendChild(tooltip);
+                this._tooltip = tooltip;
+                
+                // Position tooltip
+                const rect = this.getBoundingClientRect();
+                tooltip.style.left = (rect.left + window.scrollX + rect.width/2 - tooltip.offsetWidth/2) + 'px';
+                tooltip.style.top = (rect.top + window.scrollY - tooltip.offsetHeight - 5) + 'px';
+            }
+        });
+        
+        element.addEventListener('mouseleave', function() {
+            if (this._tooltip) {
+                document.body.removeChild(this._tooltip);
+                this._tooltip = null;
+            }
+        });
+    });
 }
 
 // Utility function to format JSON for display
