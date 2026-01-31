@@ -20,31 +20,36 @@ function App() {
 
   // Enhanced log filtering with SSE
   useEffect(() => {
+    let eventSource: EventSource;
+
     const connectEnhancedLogs = () => {
       const url = `/api/logs/enhanced?type=${logTypeFilter}&level=${logLevelFilter}&search=${encodeURIComponent(logSearch)}`;
       console.log('Connecting to enhanced logs SSE:', url);
-      
-      const eventSource = new EventSource(url);
-      
+
+      eventSource = new EventSource(url);
+
       eventSource.onopen = () => {
         console.log('Enhanced logs SSE connection established');
       };
-      
+
       eventSource.onmessage = (e) => {
         const log = JSON.parse(e.data);
-        setLogs(prevLogs => [...prevLogs, log]);
+        setLogs(prevLogs => [log, ...prevLogs]);
       };
-      
+
       eventSource.onerror = (error) => {
         console.error('Enhanced logs EventSource error:', error);
         setTimeout(connectEnhancedLogs, 2000);
       };
-      
-      return () => eventSource.close();
     };
-    
-    const eventSource = connectEnhancedLogs();
-    return () => eventSource.close();
+
+    connectEnhancedLogs();
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+    };
   }, [logTypeFilter, logLevelFilter, logSearch]);
 
   // Connection status check
@@ -103,6 +108,33 @@ function App() {
     return true;
   };
 
+  const JsonViewer = ({ data }: { data: any }) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+
+    if (typeof data !== 'object' || data === null) {
+      return <span>{JSON.stringify(data)}</span>;
+    }
+
+    const entries = Object.entries(data);
+
+    return (
+      <div>
+        <span onClick={() => setIsExpanded(!isExpanded)} style={{ cursor: 'pointer' }}>
+          {isExpanded ? '▼' : '▶'} {Array.isArray(data) ? `Array(${entries.length})` : `Object`}
+        </span>
+        {isExpanded && (
+          <div style={{ marginLeft: '20px' }}>
+            {entries.map(([key, value]) => (
+              <div key={key}>
+                <strong>{key}:</strong> <JsonViewer data={value} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Log display component
   const LogEntry = ({ log }: { log: any }) => {
     const getLogTypeInfo = (type: string) => {
@@ -137,9 +169,7 @@ function App() {
           {log.context && (
             <div className="log-context mt-2">
               <strong>Details:</strong>
-              <pre className="log-context-details">
-                {JSON.stringify(log.context, null, 2)}
-              </pre>
+              <JsonViewer data={log.context} />
             </div>
           )}
         </div>

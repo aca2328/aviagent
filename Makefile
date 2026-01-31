@@ -97,7 +97,7 @@ benchmark: ## Run benchmarks
 build: deps ## Build the application
 	@echo "🔨 Building ${APP_NAME}..."
 	@mkdir -p ${BIN_DIR}
-	@CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build ${LDFLAGS} -o ${BIN_DIR}/${APP_NAME} ./cmd/server
+	@CGO_ENABLED=0 GOOS=${GOOS} GOARCH=${GOARCH} go build ${LDFLAGS} -o ${BIN_DIR}/${APP_NAME} .
 
 .PHONY: build-all
 build-all: deps ## Build for all platforms
@@ -123,7 +123,7 @@ run: build ## Build and run the application
 .PHONY: run-dev
 run-dev: ## Run in development mode
 	@echo "🚀 Starting ${APP_NAME} in development mode..."
-	@go run ./cmd/server -config config.yaml
+	@go run . -config config.yaml
 
 .PHONY: docker-build
 docker-build: ## Build Docker image
@@ -150,7 +150,7 @@ docker-push: docker-build ## Push Docker image to registry
 .PHONY: docker-compose-up
 docker-compose-up: ## Start all services with Docker Compose
 	@echo "🐳 Starting services with Docker Compose..."
-	@docker-compose up -d
+	@docker-compose up -d --build
 
 .PHONY: docker-compose-down
 docker-compose-down: ## Stop all services with Docker Compose
