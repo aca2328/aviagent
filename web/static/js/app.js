@@ -683,12 +683,7 @@ function initializeEnhancedLogFiltering() {
     const hasEnhancedFiltering = typeFilter && levelFilter && searchInput;
     
     console.log('Enhanced log filtering available:', hasEnhancedFiltering);
-    
-    // FORCE ENHANCED FILTERING FOR TESTING
-    // Comment this out when done testing
-    console.log('FORCING ENHANCED FILTERING FOR TESTING');
-    return true; // Force enhanced filtering
-    
+
     if (!hasEnhancedFiltering) {
         console.log('Enhanced filtering UI not found, using legacy system');
         return false; // Enhanced filtering not available
