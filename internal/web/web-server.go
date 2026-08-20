@@ -1471,6 +1471,13 @@ func (s *Server) handleHealth(c *gin.Context) {
 			} else {
 				status["llm_status"] = "healthy"
 			}
+		} else if s.config.Provider == "python" {
+			pythonBridge := s.llmClient.(*python.PythonBridge)
+			if initialized, _ := pythonBridge.GetStatus()["initialized"].(bool); initialized {
+				status["llm_status"] = "healthy"
+			} else {
+				status["llm_status"] = "unhealthy"
+			}
 		}
 	} else {
 		// For known health check probes, skip LLM check to reduce API calls
