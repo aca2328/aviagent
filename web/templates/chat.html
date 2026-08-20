@@ -49,32 +49,7 @@
         <!-- Show assistant message if present -->
         {{if .assistantMessage}}
         <!-- Format the message content with proper line breaks and code blocks -->
-        {{range $line := (split .assistantMessage "\n")}}
-            {{if hasPrefix $line "```"}}
-                {{if hasSuffix $line "```"}}
-                    <!-- Single line code -->
-                    <code class="bg-light px-2 py-1 rounded">{{substr $line 3 (sub (len $line) 6)}}</code>
-                {{else}}
-                    <!-- Start of code block -->
-                    <pre class="bg-light p-3 rounded"><code>
-                {{end}}
-            {{else if eq $line "```"}}
-                <!-- End of code block -->
-                </code></pre>
-            {{else if hasPrefix $line "API Result:"}}
-                <h6 class="mt-3 mb-2"><i class="fas fa-code"></i> {{$line}}</h6>
-            {{else if hasPrefix $line "##"}}
-                <h5 class="mt-3 mb-2">{{substr $line 2}}</h5>
-            {{else if hasPrefix $line "#"}}
-                <h4 class="mt-3 mb-2">{{substr $line 1}}</h4>
-            {{else if hasPrefix $line "**"}}
-                <strong>{{substr $line 2 (sub (len $line) 4)}}</strong>
-            {{else if hasPrefix $line "-"}}
-                <li>{{substr $line 2}}</li>
-            {{else if ne $line ""}}
-                <p>{{$line}}</p>
-            {{end}}
-        {{end}}
+        {{renderChatMessage .assistantMessage}}
         {{else if .toolCalls}}
         <!-- Show processing message when tool calls are present but no assistant message -->
         <div class="alert alert-info">

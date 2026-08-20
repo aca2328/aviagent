@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"net/http"
@@ -404,6 +405,71 @@ func toJSON(v interface{}) string {
 	return string(bytes)
 }
 
+// renderChatMessage converts a chat message's lightweight markdown (headers, bold,
+// bullets, fenced code blocks) into HTML. Fenced code block content is emitted
+// verbatim as a single escaped block rather than re-parsed line-by-line, so
+// multi-line content like pretty-printed JSON renders as one readable block
+// instead of hundreds of individually-wrapped paragraph elements.
+func renderChatMessage(message string) template.HTML {
+	var b strings.Builder
+	inCodeBlock := false
+
+	for _, line := range strings.Split(message, "\n") {
+		if inCodeBlock {
+			if line == "```" {
+				b.WriteString("</code></pre>")
+				inCodeBlock = false
+			} else {
+				b.WriteString(html.EscapeString(line))
+				b.WriteString("\n")
+			}
+			continue
+		}
+
+		switch {
+		case strings.HasPrefix(line, "```"):
+			if strings.HasSuffix(line, "```") && len(line) >= 6 {
+				b.WriteString(`<code class="bg-light px-2 py-1 rounded">`)
+				b.WriteString(html.EscapeString(line[3 : len(line)-3]))
+				b.WriteString(`</code>`)
+			} else {
+				b.WriteString(`<pre class="bg-light p-3 rounded"><code>`)
+				inCodeBlock = true
+			}
+		case strings.HasPrefix(line, "API Result:"):
+			b.WriteString(`<h6 class="mt-3 mb-2"><i class="fas fa-code"></i> `)
+			b.WriteString(html.EscapeString(line))
+			b.WriteString(`</h6>`)
+		case strings.HasPrefix(line, "##"):
+			b.WriteString(`<h5 class="mt-3 mb-2">`)
+			b.WriteString(html.EscapeString(strings.TrimPrefix(line, "##")))
+			b.WriteString(`</h5>`)
+		case strings.HasPrefix(line, "#"):
+			b.WriteString(`<h4 class="mt-3 mb-2">`)
+			b.WriteString(html.EscapeString(strings.TrimPrefix(line, "#")))
+			b.WriteString(`</h4>`)
+		case strings.HasPrefix(line, "**") && strings.HasSuffix(line, "**") && len(line) >= 4:
+			b.WriteString(`<strong>`)
+			b.WriteString(html.EscapeString(line[2 : len(line)-2]))
+			b.WriteString(`</strong>`)
+		case strings.HasPrefix(line, "-"):
+			b.WriteString(`<li>`)
+			b.WriteString(html.EscapeString(strings.TrimPrefix(strings.TrimPrefix(line, "-"), " ")))
+			b.WriteString(`</li>`)
+		case line != "":
+			b.WriteString(`<p>`)
+			b.WriteString(html.EscapeString(line))
+			b.WriteString(`</p>`)
+		}
+	}
+
+	if inCodeBlock {
+		b.WriteString("</code></pre>")
+	}
+
+	return template.HTML(b.String())
+}
+
 // broadcastOperationLog sends operation logs to all connected SSE clients
 func (s *Server) broadcastOperationLog(logType, message string, context map[string]interface{}) {
 	s.operationLogMu.Lock()
@@ -655,35 +721,7 @@ func (s *Server) setupRouter() {
 	// Set up template functions
 	s.router.SetFuncMap(template.FuncMap{
 		"now": time.Now,
-		"split": strings.Split,
-		"hasPrefix": strings.HasPrefix,
-		"hasSuffix": strings.HasSuffix,
-		"substr": func(s string, start int, length int) string {
-			if start < 0 {
-				start = 0
-			}
-			if start >= len(s) {
-				return ""
-			}
-			end := start + length
-			if end > len(s) {
-				end = len(s)
-			}
-			return s[start:end]
-		},
-		"sub": func(s string, start int, length int) string {
-			if start < 0 {
-				start = 0
-			}
-			if start >= len(s) {
-				return ""
-			}
-			end := start + length
-			if end > len(s) {
-				end = len(s)
-			}
-			return s[start:end]
-		},
+		"renderChatMessage": renderChatMessage,
 	})
 
 	// Load HTML templates
