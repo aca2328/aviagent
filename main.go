@@ -14,6 +14,7 @@ import (
 	"aviagent/internal/config"
 	"aviagent/internal/web"
 
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
@@ -29,6 +30,9 @@ func main() {
 	var configPath string
 	flag.StringVar(&configPath, "config", "config.yaml", "Path to configuration file")
 	flag.Parse()
+
+	// Load .env file if present (optional; env vars set elsewhere still take precedence)
+	_ = godotenv.Load()
 
 	// Initialize logger
 	logger, err := zap.NewProduction()

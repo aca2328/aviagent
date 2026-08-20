@@ -123,7 +123,7 @@ AVI_TENANT=admin
 
 # Application Configuration
 LOG_LEVEL=info
-SERVER_PORT=8080
+SERVER_PORT=8088
 ```
 
 Example `.env` file for **Ollama**:
@@ -145,7 +145,7 @@ AVI_TENANT=admin
 
 # Application Configuration
 LOG_LEVEL=info
-SERVER_PORT=8080
+SERVER_PORT=8088
 ```
 
 ### 4️⃣ Start Services
@@ -171,7 +171,7 @@ docker-compose --profile monitoring up -d
 docker-compose ps
 
 # Check application health
-curl http://localhost:8080/api/health
+curl http://localhost:8088/api/health
 ```
 
 ### 4️⃣ Pull LLM Models
@@ -186,21 +186,21 @@ docker-compose exec ollama ollama list
 ```
 
 ### 5️⃣ Access the Application
-- **Web Interface**: `http://localhost:8080`
-- **API Documentation**: `http://localhost:8080/api/docs`
-- **Health Check**: `http://localhost:8080/api/health`
+- **Web Interface**: `http://localhost:8088`
+- **API Documentation**: `http://localhost:8088/api/docs`
+- **Health Check**: `http://localhost:8088/api/health`
 - **Monitoring** (if enabled): `http://localhost:3000` (Grafana)
 
 ### 6️⃣ Verify Installation
 ```bash
 # Check application health
-curl -s http://localhost:8080/api/health | jq .
+curl -s http://localhost:8088/api/health | jq .
 
 # Check Avi controller connection
-curl -s http://localhost:8080/api/health | jq .avi_status
+curl -s http://localhost:8088/api/health | jq .avi_status
 
 # Check LLM service connection  
-curl -s http://localhost:8080/api/health | jq .llm_status
+curl -s http://localhost:8088/api/health | jq .llm_status
 ```
 
 ## 📦 Installation Options
@@ -209,7 +209,7 @@ curl -s http://localhost:8080/api/health | jq .llm_status
 ```bash
 # Build and run with Docker using Ollama
 docker build -t aviagent:latest .
-docker run -d -p 8080:8080 \
+docker run -d -p 8088:8088 \
   -e AVI_HOST=your-avi-controller \
   -e AVI_USERNAME=admin \
   -e AVI_PASSWORD=your-password \
@@ -223,7 +223,7 @@ docker run -d -p 8080:8080 \
 ```bash
 # Build and run with Docker using Mistral AI
 docker build -t aviagent:latest .
-docker run -d -p 8080:8080 \
+docker run -d -p 8088:8088 \
   -e AVI_HOST=your-avi-controller \
   -e AVI_USERNAME=admin \
   -e AVI_PASSWORD=your-password \
@@ -283,7 +283,7 @@ go build -o aviagent ./cmd/server
 ## 🎯 Usage Guide
 
 ### 🌐 Web Interface
-1. **Login**: Access `http://localhost:8080` in your browser
+1. **Login**: Access `http://localhost:8088` in your browser
 2. **Model Selection**: Choose your preferred LLM model from the dropdown
 3. **Quick Actions**: Use predefined queries from the sidebar
 4. **Natural Language**: Type your questions in the chat input
@@ -319,12 +319,12 @@ go build -o aviagent ./cmd/server
 #### Direct API Access
 ```bash
 # List virtual services via API
-curl -X POST http://localhost:8080/api/chat \
+curl -X POST http://localhost:8088/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "List all virtual services", "model": "llama3.2"}'
 
 # Get specific virtual service details
-curl -X POST http://localhost:8080/api/chat \
+curl -X POST http://localhost:8088/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Show details for virtual service vs-web-01", "model": "mistral"}'
 ```
@@ -332,11 +332,11 @@ curl -X POST http://localhost:8080/api/chat \
 #### Avi API Proxy
 ```bash
 # Direct Avi API access (for advanced users)
-curl -X GET "http://localhost:8080/api/avi/virtualservice?limit_by=10" \
+curl -X GET "http://localhost:8088/api/avi/virtualservice?limit_by=10" \
   -H "Authorization: Bearer your-token"
 
 # Create virtual service via proxy
-curl -X POST "http://localhost:8080/api/avi/virtualservice" \
+curl -X POST "http://localhost:8088/api/avi/virtualservice" \
   -H "Content-Type: application/json" \
   -d '{"name": "test-vs", "services": [{"port": 80}]}'
 ```
@@ -349,7 +349,7 @@ Create a `config.yaml` file:
 ```yaml
 # Server Configuration
 server:
-  port: 8080
+  port: 8088
   read_timeout: 30
   write_timeout: 30
   idle_timeout: 60
@@ -427,7 +427,7 @@ export MISTRAL_API_KEY="your-mistral-api-key"
 # Application Settings
 export LOG_LEVEL="debug"
 export GIN_MODE="release"
-export SERVER_PORT=8080
+export SERVER_PORT=8088
 ```
 
 ### LLM Provider Selection
@@ -476,7 +476,7 @@ docker-compose down
 docker-compose up -d -e LLM_PROVIDER=mistral -e MISTRAL_API_KEY=your-api-key
 
 # Verify the switch
-curl http://localhost:8080/api/health | jq .provider
+curl http://localhost:8088/api/health | jq .provider
 ```
 
 #### Switch from Mistral AI to Ollama
@@ -491,7 +491,7 @@ docker-compose up -d -e LLM_PROVIDER=ollama
 docker-compose exec ollama ollama pull llama3.2
 
 # Verify the switch
-curl http://localhost:8080/api/health | jq .provider
+curl http://localhost:8088/api/health | jq .provider
 ```
 
 ### Environment Variable Management
@@ -534,7 +534,7 @@ docker-compose up -d \\
 docker run -d \\
   --memory=2g \\
   --cpus=2 \\
-  -p 8080:8080 \\
+  -p 8088:8088 \\
   -e LLM_PROVIDER=mistral \\
   -e MISTRAL_API_KEY=your-api-key \\
   aviagent:latest
@@ -547,10 +547,10 @@ docker run -d \\
 #### Ollama Models
 ```bash
 # List available Ollama models
-curl http://localhost:8080/api/models
+curl http://localhost:8088/api/models
 
 # Validate a specific Ollama model
-curl -X POST http://localhost:8080/api/models/validate \
+curl -X POST http://localhost:8088/api/models/validate \
   -H "Content-Type: application/json" \
   -d '{"model": "llama3.2"}'
 
@@ -564,10 +564,10 @@ docker-compose exec ollama ollama list
 #### Mistral AI Models
 ```bash
 # List available Mistral AI models
-curl http://localhost:8080/api/models
+curl http://localhost:8088/api/models
 
 # Validate a specific Mistral AI model
-curl -X POST http://localhost:8080/api/models/validate \
+curl -X POST http://localhost:8088/api/models/validate \
   -H "Content-Type: application/json" \
   -d '{"model": "mistral-small"}'
 
@@ -579,22 +579,22 @@ curl https://api.mistral.ai/v1/models \
 ### Session Management
 ```bash
 # Get chat history
-curl http://localhost:8080/api/chat/history
+curl http://localhost:8088/api/chat/history
 
 # Clear chat history
-curl -X DELETE http://localhost:8080/api/chat/history
+curl -X DELETE http://localhost:8088/api/chat/history
 ```
 
 ### Health Monitoring
 ```bash
 # Check application health
-curl http://localhost:8080/api/health
+curl http://localhost:8088/api/health
 
 # Check specific component health
-curl http://localhost:8080/api/health?component=avi
+curl http://localhost:8088/api/health?component=avi
 
 # Get detailed status
-curl -s http://localhost:8080/api/health | jq .
+curl -s http://localhost:8088/api/health | jq .
 ```
 
 ## 📊 Monitoring and Observability
@@ -611,7 +611,7 @@ scrape_configs:
   - job_name: 'aviagent'
     scrape_interval: 15s
     static_configs:
-      - targets: ['aviagent:8080']
+      - targets: ['aviagent:8088']
 ```
 
 ### Grafana Dashboards
@@ -674,7 +674,7 @@ docker-compose up -d --build
 
 # 5. Verify upgrade
 docker-compose logs -f --tail=50
-curl http://localhost:8080/api/health
+curl http://localhost:8088/api/health
 ```
 
 ### Version Compatibility
@@ -747,10 +747,10 @@ curl https://api.mistral.ai/v1/usage \
 docker-compose logs avi-llm-agent
 
 # Check application health
-curl -v http://localhost:8080/api/health
+curl -v http://localhost:8088/api/health
 
 # Test direct API access
-curl -X POST http://localhost:8080/api/chat \
+curl -X POST http://localhost:8088/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "test", "model": "llama3.2"}'
 ```
@@ -775,7 +775,7 @@ docker-compose up -d --force-recreate ollama
 #### Provider Configuration Issues
 ```bash
 # Check which provider is being used
-curl http://localhost:8080/api/health | jq .provider
+curl http://localhost:8088/api/health | jq .provider
 
 # Verify environment variables
 docker-compose exec avi-llm-agent env | grep LLM_PROVIDER
@@ -923,7 +923,7 @@ Create a `config.yaml` file:
 
 ```yaml
 server:
-  port: 8080
+  port: 8088
   read_timeout: 30
   write_timeout: 30
   idle_timeout: 60
@@ -1024,7 +1024,7 @@ go build -o aviagent ./cmd/server
 docker build -t aviagent:dev .
 
 # Run with development configuration
-docker run -p 8080:8080 \
+docker run -p 8088:8088 \
   -v $(pwd)/config.yaml:/etc/aviagent/config.yaml \
   aviagent:dev
 ```
@@ -1215,7 +1215,7 @@ spec:
       - name: app
         image: aviagent:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8088
         env:
         - name: AVI_HOST
           valueFrom:

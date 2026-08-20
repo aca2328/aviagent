@@ -80,7 +80,7 @@ type LogConfig struct {
 // Load loads configuration from file and environment variables
 func Load(configPath string) (*Config, error) {
 	// Set default values
-	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.port", 8088)
 	viper.SetDefault("server.read_timeout", 30)
 	viper.SetDefault("server.write_timeout", 30)
 	viper.SetDefault("server.idle_timeout", 60)

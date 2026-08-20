@@ -152,7 +152,7 @@ func (s *Server) handleOperationEvents(c *gin.Context)
 
 ### Connecting to SSE
 ```javascript
-const eventSource = new EventSource('http://localhost:8080/api/events');
+const eventSource = new EventSource('http://localhost:8088/api/events');
 
 eventSource.onmessage = function(event) {
   const data = JSON.parse(event.data);
@@ -167,7 +167,7 @@ eventSource.onerror = function(error) {
 
 ### Enhanced Chat Request
 ```javascript
-const response = await fetch('http://localhost:8080/api/chat', {
+const response = await fetch('http://localhost:8088/api/chat', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({

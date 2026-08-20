@@ -79,11 +79,11 @@ USER appuser
 WORKDIR /web
 
 # Expose port
-EXPOSE 8080
+EXPOSE 8088
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 -O /dev/null http://localhost:8080/api/health || exit 1
+    CMD wget --no-verbose --tries=1 -O /dev/null http://localhost:8088/api/health || exit 1
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
