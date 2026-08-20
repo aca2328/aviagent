@@ -1059,7 +1059,7 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 	// Get tool definitions
 	var tools interface{}
-	if s.config.Provider == "ollama" {
+	if s.config.Provider == "ollama" || s.config.Provider == "python" {
 		tools = llm.GetAviToolDefinitions()
 	}
 
@@ -1324,6 +1324,9 @@ func (s *Server) handleGetModels(c *gin.Context) {
 		ollamaClient := s.llmClient.(*llm.Client)
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
+	} else if s.config.Provider == "python" {
+		models = s.config.Mistral.Models
+		defaultModel = s.config.Mistral.DefaultModel
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -1342,6 +1345,9 @@ func (s *Server) handleHTMXModels(c *gin.Context) {
 		ollamaClient := s.llmClient.(*llm.Client)
 		models = ollamaClient.GetAvailableModels()
 		defaultModel = s.config.LLM.DefaultModel
+	} else if s.config.Provider == "python" {
+		models = s.config.Mistral.Models
+		defaultModel = s.config.Mistral.DefaultModel
 	}
 
 	c.HTML(http.StatusOK, "models.html", gin.H{

@@ -1,0 +1,10 @@
+<div class="model-selection mb-3">
+    <label for="model-select" class="form-label">
+        <i class="fas fa-robot"></i> Model
+    </label>
+    <select id="model-select" class="form-select" name="model">
+        {{range .models}}
+        <option value="{{.}}" {{if eq . $.default}}selected{{end}}>{{.}}</option>
+        {{end}}
+    </select>
+</div>

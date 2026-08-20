@@ -156,14 +156,17 @@ class PythonMistralClient:
             
             if choice.message.tool_calls:
                 for tool_call in choice.message.tool_calls:
+                    arguments = tool_call.function.arguments
+                    if isinstance(arguments, str):
+                        arguments = json.loads(arguments) if arguments else {}
                     tool_calls.append(ToolCall(
                         id=tool_call.id,
                         function=ToolCallFunction(
                             name=tool_call.function.name,
                             description="",
-                            parameters=tool_call.function.arguments
+                            parameters=arguments
                         ),
-                        args=tool_call.function.arguments
+                        args=arguments
                     ))
 
         return LLMResponse(
