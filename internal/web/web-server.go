@@ -1105,7 +1105,11 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 			if result != nil {
 				resultStr := fmt.Sprintf("Tool call result: %s - Success", toolCall.Function.Name)
 				toolResults = append(toolResults, resultStr)
-				llmResponse.Message += fmt.Sprintf("\n\nAPI Result:\n```json\n%v\n```", result)
+				resultJSON, err := json.MarshalIndent(result, "", "  ")
+				if err != nil {
+					resultJSON = []byte(fmt.Sprintf("%v", result))
+				}
+				llmResponse.Message += fmt.Sprintf("\n\nAPI Result:\n```json\n%s\n```", resultJSON)
 				s.broadcastOperationLog("success", "Tool call succeeded", map[string]interface{}{
 					"tool": toolCall.Function.Name,
 					"result": result,
