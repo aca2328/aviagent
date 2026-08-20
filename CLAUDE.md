@@ -59,6 +59,10 @@ Template/static paths are resolved relative to cwd at startup (`internal/web/web
 
 **Config:** `internal/config/config.go` uses Viper — defaults set in code, overridable by `config.yaml` and then environment variables (prefix-less binds like `AVI_HOST`, `MISTRAL_API_KEY`, `LLM_PROVIDER`, etc. — see `Load()` for the full env var list). `avi.host`/`username`/`password` are always required regardless of provider.
 
+## Git
+
+Solo project (single maintainer, no team review process). Direct commits and pushes to `main` are authorized — this overrides the global "never push directly to main" rule.
+
 ## Repo layout notes
 
 - `archive/` — old test scripts, logs, and analysis docs deliberately moved out of the way; not part of the active codebase (see `archive/README.md`).
