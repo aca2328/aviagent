@@ -9,30 +9,43 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --bg: #0a0f1a;
-    --bg-alt: #0d1422;
-    --surface: #111a2c;
-    --surface-2: #0e1626;
-    --border: #223252;
-    --border-soft: #182338;
-    --text: #eef2fb;
-    --text-dim: #93a1bb;
-    --text-faint: #56668a;
-    --accent: #5eead4;
-    --accent-dim: #2c7a6d;
-    --accent-soft: rgba(94, 234, 212, 0.12);
-    --link-line: rgba(139, 154, 184, 0.28);
-    --xref-line: #fb923c;
-    --xref-line-weak: #94a3b8;
+    /* Palette built in OKLCH and validated with the data-viz six checks.
+       Neutrals are one hue family (264 deg) stepped evenly in lightness — that
+       even ramp is what makes the chrome read as "smooth". The three ball
+       hues sit at near-equal lightness with moderate chroma, and are the only
+       triad that survives colour-vision-deficiency separation at all-pairs:
+       green and teal collapse against the rose under protanopia/deuteranopia
+       (measured ΔE 3.0–5.8), so blue / rose / amber is a measured result,
+       not a taste call. Balls: worst all-pairs CVD ΔE 12.6, normal 17.1. */
+    --bg: #070b14;
+    --bg-alt: #0e121a;
+    --surface: #171b24;
+    --surface-2: #11151d;
+    --surface-3: #21262f;
+    --border: #343b48;
+    --border-soft: #222732;
+    --text: #eff2f8;
+    --text-dim: #aab1bf;
+    --text-faint: #7e8799;
+    --accent: #61d5c0;
+    --accent-dim: #206b5f;
+    --accent-soft: rgba(97, 213, 192, 0.12);
+    --link-line: rgba(98, 105, 118, 0.30);
+    --xref-line: #ef8d67;
+    --xref-line-weak: #60636a;
+    --match: #e9deb5;
 
-    --n-root: #f8fafc;
-    --n-vs: #60a5fa;
-    --n-object: #a78bfa;
-    --n-array: #fb7185;
-    --n-string: #2dd4bf;
-    --n-number: #fbbf24;
-    --n-boolean: #38bdf8;
-    --n-null: #64748b;
+    /* ball identity — the load-bearing categorical channel */
+    --n-vs: #5a8ee4;
+    --n-object: #c76d9a;
+    --n-array: #cb8315;
+
+    /* panel value types — a secondary channel: every dot sits beside its key
+       and its literal value, so identity is never colour-alone here */
+    --n-string: #29a895;
+    --n-number: #c7852a;
+    --n-boolean: #4e90d2;
+    --n-null: #71747b;
 
     --font-ui: "IBM Plex Sans", system-ui, sans-serif;
     --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
@@ -41,10 +54,7 @@
   * { box-sizing: border-box; }
 
   html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
+    margin: 0; padding: 0; width: 100%; height: 100%;
     background: var(--bg);
     color: var(--text);
     font-family: var(--font-ui);
@@ -56,9 +66,7 @@
   }
 
   canvas#graph {
-    position: fixed;
-    inset: 0;
-    display: block;
+    position: fixed; inset: 0; display: block;
     background: var(--bg);
     touch-action: none;
     cursor: grab;
@@ -66,301 +74,357 @@
   canvas#graph.grabbing { cursor: grabbing; }
   canvas#graph.hovering { cursor: pointer; }
 
+  /* ---------- top bar ---------- */
   #topbar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 14px 20px;
-    background: linear-gradient(to bottom, rgba(10,15,26,0.92), rgba(10,15,26,0.7) 80%, transparent);
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 20px;
+    background: linear-gradient(to bottom, rgba(7,11,20,0.94), rgba(7,11,20,0.72) 78%, transparent);
     pointer-events: none;
   }
   #topbar > * { pointer-events: auto; }
+  /* the detail drawer sits above the top bar, so pull the bar in when it
+     opens — otherwise half the toolbar disappears under the panel */
+  @media (min-width: 821px) {
+    body.panel-open #topbar { right: 400px; }
+  }
+  .toolbar { min-width: 0; }
 
   .brand { display: flex; flex-direction: column; gap: 2px; }
-  .brand h1 {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-  }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
   .brand .sub {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-faint);
-    letter-spacing: 0.02em;
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--text-faint); letter-spacing: 0.02em; white-space: nowrap;
   }
+  .brand h1 { white-space: nowrap; }
   .brand .sub span { color: var(--accent); }
 
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
+  .toolbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
   .toolbar button {
-    font-family: var(--font-ui);
-    font-size: 12.5px;
-    font-weight: 500;
+    font-family: var(--font-ui); font-size: 12.5px; font-weight: 500;
     color: var(--text-dim);
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 7px;
-    padding: 7px 12px;
-    cursor: pointer;
+    border-radius: 7px; padding: 7px 12px; cursor: pointer;
     transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
   }
-  .toolbar button:hover {
-    color: var(--text);
-    border-color: var(--accent-dim);
-    background: var(--surface-2);
-  }
-  .toolbar button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
+  .toolbar button:hover { color: var(--text); border-color: var(--accent-dim); background: var(--surface-2); }
+  .toolbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   .toolbar button.active {
-    color: var(--xref-line);
-    border-color: var(--xref-line);
-    background: rgba(251, 146, 60, 0.1);
+    color: var(--xref-line); border-color: var(--xref-line);
+    background: rgba(239, 141, 103, 0.12);
+  }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); }
+  .toolbar button.search-trigger {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--text-faint); min-width: 168px; justify-content: space-between;
+  }
+  .toolbar button.search-trigger .glyph { font-size: 14px; line-height: 1; }
+  .toolbar button.search-trigger .label { flex: 1; text-align: left; }
+  /* the drawer takes 400px off the bar — drop the search label rather than
+     let the toolbar wrap onto a second row over the canvas */
+  @media (min-width: 821px) {
+    body.panel-open .toolbar button.search-trigger { min-width: 0; }
+    body.panel-open .toolbar button.search-trigger .label { display: none; }
+    /* the stat line is ancillary while you're reading a node — dropping it
+       is what actually buys the room to keep the toolbar on one row */
+    body.panel-open .brand .sub { display: none; }
+  }
+  .toolbar button.search-trigger:hover { color: var(--text-dim); }
+  kbd {
+    font-family: var(--font-mono); font-size: 10.5px;
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px; color: var(--text-dim);
   }
 
+  /* ---------- legend ---------- */
   #legend {
-    position: fixed;
-    left: 20px;
-    bottom: 20px;
-    z-index: 10;
-    background: var(--surface);
+    position: fixed; left: 20px; bottom: 20px; z-index: 10;
+    background: rgba(23, 27, 36, 0.92);
+    backdrop-filter: blur(6px);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 7px;
-    min-width: 168px;
+    border-radius: 10px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 7px; min-width: 168px;
   }
+  #legend.collapsed .legend-body { display: none; }
+  .legend-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; cursor: pointer; user-select: none;
+  }
+  .legend-body { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
   #legend .legend-title {
-    font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
-    margin-bottom: 2px;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 2px;
   }
-  .legend-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--text-dim);
-  }
-  .legend-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    flex: none;
-  }
-  .legend-line {
-    width: 16px;
-    height: 0;
-    border-top: 2px dashed var(--xref-line);
-    flex: none;
-  }
-  .legend-line.weak {
-    border-top-color: var(--xref-line-weak);
-    border-top-style: dotted;
-  }
-  .legend-sep {
-    height: 1px;
-    background: var(--border-soft);
-    margin: 2px 0;
-  }
+  .legend-head .legend-title { margin-bottom: 0; }
+  .legend-caret { color: var(--text-faint); font-size: 10px; transition: transform 0.15s ease; }
+  #legend.collapsed .legend-caret { transform: rotate(-90deg); }
+  .legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .legend-line { width: 16px; height: 0; border-top: 2px dashed var(--xref-line); flex: none; }
+  .legend-line.weak { border-top-color: var(--xref-line-weak); border-top-style: dotted; }
+  .legend-sep { height: 1px; background: var(--border-soft); margin: 2px 0; }
 
+  /* ---------- hint ---------- */
   #hint {
-    position: fixed;
-    right: 20px;
-    bottom: 20px;
-    z-index: 10;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    text-align: right;
-    line-height: 1.6;
+    position: fixed; right: 20px; bottom: 20px; z-index: 10;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-faint); text-align: right; line-height: 1.9;
   }
-  #hint kbd {
-    font-family: var(--font-mono);
+  #hint kbd { margin: 0 1px; }
+  body.panel-open #hint { display: none; }
+
+  /* ---------- hover tooltip ---------- */
+  #tooltip {
+    position: fixed; z-index: 30; pointer-events: none;
+    background: rgba(14, 18, 26, 0.97);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 11px;
+    max-width: 320px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    opacity: 0; transition: opacity 0.1s ease;
+  }
+  #tooltip.show { opacity: 1; }
+  #tooltip .tt-key {
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600;
+    color: var(--text); word-break: break-all; line-height: 1.35;
+  }
+  #tooltip .tt-kind {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 4px;
+  }
+  #tooltip .tt-dot { width: 7px; height: 7px; border-radius: 50%; }
+  #tooltip .tt-meta {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft);
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+    display: flex; flex-wrap: wrap; gap: 4px 12px;
+  }
+  #tooltip .tt-meta b { color: var(--text); font-weight: 500; }
+  #tooltip .tt-preview {
+    margin-top: 6px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-faint); line-height: 1.5;
+  }
+  #tooltip .tt-preview span { color: var(--text-dim); }
+
+  /* ---------- search overlay ---------- */
+  #search-overlay {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(4, 6, 12, 0.66);
+    backdrop-filter: blur(3px);
+    display: none; justify-content: center; align-items: flex-start;
+    padding: 12vh 20px 20px;
+  }
+  #search-overlay.open { display: flex; }
+  #search-box {
+    width: 100%; max-width: 620px;
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1px 5px;
-    color: var(--text-dim);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #search-input-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border-soft);
+  }
+  #search-input-row .glyph { color: var(--text-faint); font-size: 14px; }
+  #search-input {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--text); font-family: var(--font-mono); font-size: 14.5px;
+  }
+  #search-input::placeholder { color: var(--text-faint); }
+  #search-count { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  #search-results { max-height: 52vh; overflow-y: auto; }
+  .sr-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .sr-row.sel { background: var(--surface-3); border-left-color: var(--accent); }
+  .sr-row:hover { background: var(--surface-2); }
+  .sr-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .sr-main { flex: 1; min-width: 0; }
+  .sr-key {
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sr-key mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
+  .sr-path {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+  }
+  .sr-tag {
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-faint);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; flex: none;
+  }
+  .sr-empty { padding: 22px 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
+  #search-foot {
+    display: flex; gap: 16px; padding: 9px 16px;
+    border-top: 1px solid var(--border-soft);
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
   }
 
+  /* ---------- detail panel ---------- */
   #detail {
-    position: fixed;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 380px;
-    max-width: 88vw;
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 400px; max-width: 92vw;
     background: var(--surface);
     border-left: 1px solid var(--border);
     z-index: 20;
     transform: translateX(100%);
     transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
-    display: flex;
-    flex-direction: column;
+    display: flex; flex-direction: column;
     box-shadow: -24px 0 48px rgba(0,0,0,0.35);
   }
   #detail.open { transform: translateX(0); }
 
   #detail .detail-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 18px 18px 14px;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px; padding: 16px 16px 12px;
     border-bottom: 1px solid var(--border-soft);
   }
   #detail .detail-type {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-    margin-bottom: 8px;
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px;
   }
   #detail .type-dot { width: 8px; height: 8px; border-radius: 50%; }
-  #detail .detail-key {
-    font-size: 17px;
-    font-weight: 600;
-    word-break: break-word;
-    line-height: 1.3;
+  #detail .detail-key { font-size: 17px; font-weight: 600; word-break: break-word; line-height: 1.3; }
+  .head-actions { display: flex; gap: 6px; flex: none; }
+  .icon-btn {
+    width: 28px; height: 28px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text-dim); cursor: pointer; font-size: 13px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-ui);
+    transition: color 0.12s ease, border-color 0.12s ease;
   }
-  #detail-close {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text-dim);
-    cursor: pointer;
-    font-size: 15px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  #detail-close:hover { color: var(--text); border-color: var(--accent-dim); }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent-dim); }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .icon-btn.wide { width: auto; padding: 0 10px; font-size: 11.5px; gap: 6px; }
 
   #detail .detail-body {
-    padding: 16px 18px 24px;
-    overflow-y: auto;
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
+    padding: 14px 16px 24px; overflow-y: auto; flex: 1;
+    display: flex; flex-direction: column; gap: 16px;
   }
 
   .field-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
-    margin-bottom: 6px;
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 6px;
   }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 
   #detail-path {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text-dim);
-    line-height: 1.7;
-    overflow-x: auto;
-    white-space: nowrap;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);
+    line-height: 1.9; word-break: break-word;
   }
-  #detail-path .seg { color: var(--text-dim); }
-  #detail-path .sep { color: var(--text-faint); margin: 0 4px; }
-  #detail-path .seg:last-child { color: var(--accent); }
+  #detail-path .seg {
+    color: var(--text-dim); background: none; border: none; padding: 1px 3px;
+    font: inherit; cursor: pointer; border-radius: 3px;
+  }
+  #detail-path .seg:hover { color: var(--accent); background: var(--accent-soft); }
+  #detail-path .seg:disabled { cursor: default; }
+  #detail-path .seg:disabled:hover { color: var(--text-dim); background: none; }
+  #detail-path .sep { color: var(--text-faint); margin: 0 1px; }
+  #detail-path .seg.last { color: var(--accent); }
+
+  #field-filter {
+    width: 100%; margin-bottom: 8px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 6px 9px;
+    color: var(--text); font-family: var(--font-mono); font-size: 11.5px;
+    outline: none;
+  }
+  #field-filter:focus { border-color: var(--accent-dim); }
+  #field-filter::placeholder { color: var(--text-faint); }
 
   .fields-list {
-    display: flex;
-    flex-direction: column;
-    border: 1px solid var(--border-soft);
-    border-radius: 8px;
-    background: var(--surface-2);
-    overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-soft); border-radius: 8px;
+    background: var(--surface-2); overflow: hidden;
   }
-  .field-row { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); }
+  .field-row { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); position: relative; }
   .field-row:last-child { border-bottom: none; }
-  .field-row-head {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-bottom: 4px;
+  .field-row.flash { animation: flashrow 1.6s ease-out; }
+  @keyframes flashrow {
+    0%, 35% { background: rgba(233, 222, 181, 0.14); }
+    100% { background: transparent; }
   }
+  .field-row-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
   .field-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-  .field-key {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--text-dim);
+  .field-key { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); flex: 1; min-width: 0; word-break: break-all; }
+  .field-key mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
+  .copy-btn {
+    opacity: 0; flex: none;
+    background: var(--surface-3); border: 1px solid var(--border);
+    color: var(--text-faint); border-radius: 4px;
+    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+    padding: 2px 6px; cursor: pointer; transition: opacity 0.12s ease, color 0.12s ease;
   }
+  .field-row:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
   .field-value {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--text);
-    word-break: break-word;
-    padding-left: 14px;
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5;
+    color: var(--text); word-break: break-word; padding-left: 14px;
   }
+  .field-value mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
   .field-value.is-empty { color: var(--text-faint); font-style: italic; }
+  .ref-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(239, 141, 103, 0.12);
+    border: 1px solid rgba(239, 141, 103, 0.38);
+    color: var(--xref-line);
+    border-radius: 5px; padding: 2px 7px;
+    font-family: var(--font-mono); font-size: 11.5px;
+    cursor: pointer; text-align: left; max-width: 100%;
+  }
+  .ref-link:hover { background: rgba(239, 141, 103, 0.22); }
+  .ref-link .arrow { opacity: 0.7; font-size: 10px; }
   .fields-empty {
-    padding: 14px;
-    font-size: 12.5px;
-    color: var(--text-faint);
-    font-style: italic;
-    line-height: 1.5;
+    padding: 13px; font-size: 12.5px; color: var(--text-faint);
+    font-style: italic; line-height: 1.5;
   }
 
+  .child-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .child-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 4px 9px;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim);
+    cursor: pointer; max-width: 100%;
+  }
+  .child-chip:hover { color: var(--text); border-color: var(--accent-dim); }
+  .child-chip .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .child-chip .chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .child-chip .chip-n { color: var(--text-faint); font-size: 10.5px; }
+
   #detail-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 18px;
-    font-size: 12px;
-    color: var(--text-dim);
+    display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; color: var(--text-dim);
   }
   #detail-meta div { display: flex; flex-direction: column; gap: 3px; }
   #detail-meta .v { font-family: var(--font-mono); color: var(--text); }
 
-  #stage-label {
-    position: fixed;
-    left: 50%;
-    top: 16px;
-    transform: translateX(-50%);
-    z-index: 10;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-faint);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 5px 12px;
-    display: none;
-    pointer-events: none;
+  /* ---------- toast ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px);
+    z-index: 50; pointer-events: none;
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text);
+    opacity: 0; transition: opacity 0.16s ease, transform 0.16s ease;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-  @media (max-width: 720px) {
+  @media (max-width: 820px) {
     #legend { display: none; }
     #hint { display: none; }
     .brand .sub { display: none; }
+    .toolbar button.search-trigger { min-width: 0; }
+    .toolbar button.search-trigger .label,
+    .toolbar button.search-trigger kbd { display: none; }
   }
 </style>
 </head>
@@ -371,41 +435,69 @@
 <div id="topbar">
   <div class="brand">
     <h1>Avi API Response — Node Graph</h1>
-    <div class="sub"><span id="stat-visible">0</span> nodes on screen · <span id="stat-leaves">0</span> values total</div>
+    <div class="sub"><span id="stat-vs">0</span> virtual services · <span id="stat-visible">0</span> nodes on screen · <span id="stat-leaves">0</span> values total</div>
   </div>
   <div class="toolbar">
-    <button id="btn-expand">Expand all</button>
-    <button id="btn-collapse">Collapse all</button>
-    <button id="btn-reset">Reset view</button>
-    <button id="btn-xrefs" class="active">Cross-refs</button>
-    <button id="btn-tree" class="active">Structure</button>
+    <button id="btn-search" class="search-trigger" title="Search keys, values and paths">
+      <span class="glyph">⌕</span><span class="label">Search data…</span><kbd>/</kbd>
+    </button>
+    <span class="sep"></span>
+    <button id="btn-depth" title="Open every virtual service one level (click a ball to go deeper)">Expand VSs</button>
+    <button id="btn-expand-all" title="Open every ball at every depth">Expand all</button>
+    <button id="btn-collapse" title="Collapse every virtual service">Collapse</button>
+    <button id="btn-fit" title="Fit all visible balls in view">Fit</button>
+    <span class="sep"></span>
+    <button id="btn-focus" title="Dim everything except the selection and its links">Focus</button>
+    <button id="btn-xrefs" class="active" title="Show cross-reference links">Cross-refs</button>
+    <button id="btn-tree" class="active" title="Show parent/child structure links">Structure</button>
   </div>
 </div>
 
-<div id="stage-label"></div>
-
 <div id="legend">
-  <div class="legend-title">Ball types</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-root)"></span>Response root</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-vs)"></span>Virtual service</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-object)"></span>Object</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-array)"></span>Array</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--xref-line-weak)"></span>External object</div>
-  <div class="legend-sep"></div>
-  <div class="legend-title">Field colors (in panel)</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-string)"></span>String value</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-number)"></span>Number value</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-boolean)"></span>Boolean value</div>
-  <div class="legend-row"><span class="legend-dot" style="background:var(--n-null)"></span>Null / empty</div>
-  <div class="legend-sep"></div>
-  <div class="legend-title">Cross-reference</div>
-  <div class="legend-row"><span class="legend-line"></span>Ref target listed in JSON</div>
-  <div class="legend-row"><span class="legend-line weak"></span>Shared ref, target not in JSON</div>
+  <div class="legend-head" id="legend-head">
+    <span class="legend-title">Legend</span>
+    <span class="legend-caret">▾</span>
+  </div>
+  <div class="legend-body">
+    <div class="legend-title">Ball types</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-vs)"></span>Virtual service</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-object)"></span>Object</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-array)"></span>Array</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--xref-line-weak)"></span>External object</div>
+    <div class="legend-sep"></div>
+    <div class="legend-title">Field colors (in panel)</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-string)"></span>String value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-number)"></span>Number value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-boolean)"></span>Boolean value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-null)"></span>Null / empty</div>
+    <div class="legend-sep"></div>
+    <div class="legend-title">Cross-reference</div>
+    <div class="legend-row"><span class="legend-line"></span>Ref target listed in JSON</div>
+    <div class="legend-row"><span class="legend-line weak"></span>Shared ref, target not in JSON</div>
+  </div>
 </div>
 
 <div id="hint">
-  click a ball to expand it & view its fields<br />
-  drag to move · scroll to zoom
+  <kbd>click</kbd> expand &amp; inspect · <kbd>dbl-click</kbd> collapse<br />
+  <kbd>/</kbd> search · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> walk the tree · <kbd>F</kbd> fit
+</div>
+
+<div id="tooltip"></div>
+
+<div id="search-overlay">
+  <div id="search-box">
+    <div id="search-input-row">
+      <span class="glyph">⌕</span>
+      <input id="search-input" type="text" placeholder="Search keys, values, paths…  (try: pool_ref, ENABLED, 443)" autocomplete="off" spellcheck="false" />
+      <span id="search-count"></span>
+    </div>
+    <div id="search-results"></div>
+    <div id="search-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>↵</kbd> reveal in graph</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
 </div>
 
 <div id="detail">
@@ -414,20 +506,34 @@
       <div class="detail-type"><span class="type-dot" id="detail-type-dot"></span><span id="detail-type-text"></span></div>
       <div class="detail-key" id="detail-key"></div>
     </div>
-    <button id="detail-close" aria-label="Close">✕</button>
+    <div class="head-actions">
+      <button class="icon-btn" id="detail-copy" title="Copy this node's JSON subtree">⧉</button>
+      <button class="icon-btn" id="detail-toggle" title="Collapse / expand this ball">−</button>
+      <button class="icon-btn" id="detail-close" title="Close (Esc)">×</button>
+    </div>
   </div>
   <div class="detail-body">
     <div>
       <div class="field-label">Path</div>
       <div id="detail-path"></div>
     </div>
-    <div>
-      <div class="field-label">Fields</div>
+    <div id="detail-children-sec">
+      <div class="field-label">Nested balls</div>
+      <div id="detail-children" class="child-list"></div>
+    </div>
+    <div id="detail-fields-sec">
+      <div class="sec-head">
+        <div class="field-label">Fields</div>
+        <div class="field-label" id="detail-fields-count"></div>
+      </div>
+      <input id="field-filter" type="text" placeholder="filter fields…" autocomplete="off" spellcheck="false" />
       <div id="detail-fields" class="fields-list"></div>
     </div>
     <div id="detail-meta"></div>
   </div>
 </div>
+
+<div id="toast"></div>
 
 <script>
 "use strict";
@@ -1145,6 +1251,7 @@ function buildNode(label, value, parent, depth, parentPath) {
     parent,
     depth,
     path,
+    raw: value,
     children: [],
     expanded: depth === 0,
   };
@@ -1182,7 +1289,6 @@ function buildNode(label, value, parent, depth, parentPath) {
 }
 
 const root = buildNode("API Response", DATA, null, 0, []);
-const TOTAL_LEAVES = root.leafCount;
 
 function allContainers(node, out) {
   if (node.kind !== "leaf") {
@@ -1192,6 +1298,29 @@ function allContainers(node, out) {
   return out;
 }
 const CONTAINERS = allContainers(root, []);
+
+/* The response envelope carries no information worth a ball: "API Response"
+   only ever holds `count` and `results`, and `results` only holds the virtual
+   services. Both are skipped everywhere — layout, links, search, breadcrumbs —
+   so the virtual services ARE the top level. The nodes still exist in the
+   tree (paths, refs and `raw` subtrees all still resolve through them); they
+   are simply never shown. */
+const RESULTS_NODE = root.children.find((c) => c.key === "results" && c.kind === "array");
+const TOP_NODES = (RESULTS_NODE ? RESULTS_NODE.children : root.children).filter((c) => c.kind !== "leaf");
+const HIDDEN = new Set(RESULTS_NODE ? [root.id, RESULTS_NODE.id] : [root.id]);
+const TOP_DEPTH = TOP_NODES.length ? TOP_NODES[0].depth : 1;
+// how many path segments to drop when showing a path to the user
+const PATH_SKIP = TOP_DEPTH;
+function displayPath(node) { return node.path.slice(PATH_SKIP); }
+
+const TOTAL_LEAVES = TOP_NODES.reduce((s, n) => s + n.leafCount, 0);
+
+function ancestorChain(node) {
+  const chain = [];
+  let n = node;
+  while (n && !HIDDEN.has(n.id)) { chain.unshift(n); n = n.parent; }
+  return chain;
+}
 
 /* ---------------------------------------------------------------------
    2b. Cross-references — links between different balls whose fields
@@ -1227,6 +1356,9 @@ function isOwnUuidLeaf(ownerNode, uuid) {
 
 const EXTERNAL_NODES = [];
 const EXTERNAL_LINKS = []; // { owner, ext }
+// uuid -> the ball that reference resolves to (a listed object, or the
+// synthetic external ball standing in for one that isn't listed here).
+const REF_TARGET = new Map();
 
 const RESOLVED_PAIRS = (function build() {
   const uuidInfo = new Map(); // uuid -> Map(owner node -> type prefix)
@@ -1248,6 +1380,7 @@ const RESOLVED_PAIRS = (function build() {
     const owners = Array.from(ownerMap.keys());
     const hub = owners.find((o) => isOwnUuidLeaf(o, uuid));
     if (hub) {
+      REF_TARGET.set(uuid, hub);
       owners.forEach((o) => {
         if (o === hub) return;
         const key = hub.id < o.id ? `${hub.id}|${o.id}` : `${o.id}|${hub.id}`;
@@ -1265,8 +1398,11 @@ const RESOLVED_PAIRS = (function build() {
         children: [],
         expanded: false,
         leafCount: 0,
+        depth: 1,
+        path: ["external", ownerMap.get(owners[0]), uuid],
       };
       EXTERNAL_NODES.push(extNode);
+      REF_TARGET.set(uuid, extNode);
       owners.forEach((o) => EXTERNAL_LINKS.push({ owner: o, ext: extNode }));
     }
   }
@@ -1274,14 +1410,103 @@ const RESOLVED_PAIRS = (function build() {
 })();
 
 /* ---------------------------------------------------------------------
-   3. Visible set + simulation
+   2c. Search index — one entry per ball and per leaf value. Leaves are
+   never drawn as balls, so a leaf hit resolves to its parent ball and
+   the panel flashes the matching field row.
 --------------------------------------------------------------------- */
-const sim = new Map(); // id -> {x,y,vx,vy,fx,fy,fixed}
+const INDEX = [];
+(function buildIndex(node) {
+  if (HIDDEN.has(node.id)) { node.children.forEach(buildIndex); return; }
+  // a leaf hanging directly off the envelope (`count`) has no ball to reveal,
+  // and it only restates the virtual-service count already in the header
+  if (node.kind === "leaf" && node.parent && HIDDEN.has(node.parent.id)) return;
+  if (node.kind === "leaf") {
+    INDEX.push({
+      node,
+      ball: node.parent,
+      isLeaf: true,
+      key: String(node.key),
+      lkey: String(node.key).toLowerCase(),
+      value: node.value === null ? "null" : String(node.value),
+      lvalue: (node.value === null ? "null" : String(node.value)).toLowerCase(),
+      lpath: displayPath(node).join(" / ").toLowerCase(),
+      pathStr: displayPath(node).slice(0, -1).join(" / "),
+      depth: node.depth,
+    });
+  } else {
+    INDEX.push({
+      node,
+      ball: node,
+      isLeaf: false,
+      key: String(node.key),
+      lkey: String(node.key).toLowerCase(),
+      value: node.childLabel || "",
+      lvalue: "",
+      lpath: displayPath(node).join(" / ").toLowerCase(),
+      pathStr: displayPath(node).slice(0, -1).join(" / "),
+      depth: node.depth,
+    });
+    node.children.forEach(buildIndex);
+  }
+})(root);
+EXTERNAL_NODES.forEach((ext) => {
+  INDEX.push({
+    node: ext,
+    ball: ext,
+    isLeaf: false,
+    key: ext.key,
+    lkey: ext.key.toLowerCase(),
+    value: ext.uuid,
+    lvalue: ext.uuid.toLowerCase(),
+    lpath: ("external " + ext.key + " " + ext.uuid).toLowerCase(),
+    pathStr: `not listed · referenced by ${ext.owners.length}`,
+    depth: 1,
+    isExternal: true,
+  });
+});
+
+function scoreEntry(e, q, tokens) {
+  let s = 0;
+  if (e.lkey === q) s = 100;
+  else if (e.lkey.startsWith(q)) s = 74;
+  else if (e.lkey.includes(q)) s = 56;
+  else if (e.lvalue === q) s = 64;
+  else if (e.lvalue.includes(q)) s = 42;
+  else if (e.lpath.includes(q)) s = 22;
+  else if (tokens.length > 1) {
+    const hay = e.lkey + " " + e.lvalue + " " + e.lpath;
+    if (tokens.every((t) => hay.includes(t))) s = 14;
+  }
+  if (!s) return 0;
+  return s - Math.min(8, e.depth); // prefer shallower, more structural hits
+}
+
+const SEARCH_LIMIT = 60;
+function runSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const hits = [];
+  for (const e of INDEX) {
+    const s = scoreEntry(e, q, tokens);
+    if (s > 0) hits.push({ e, s });
+  }
+  hits.sort((a, b) => b.s - a.s || a.e.depth - b.e.depth);
+  return hits.slice(0, SEARCH_LIMIT).map((h) => h.e);
+}
+
+/* ---------------------------------------------------------------------
+   3. Visible set + layout
+--------------------------------------------------------------------- */
+const sim = new Map(); // id -> {x,y,dragging}
 let visibleNodes = [];
 let visibleLinks = [];
 let visibleIdSet = new Set();
 let showXrefs = true;
 let showTree = true;
+let focusMode = false;
+let focusSet = null;         // Set of ids kept bright, or null for "all bright"
+let matchedBallIds = new Set(); // balls carrying a live search hit
 
 function radiusOf(node) {
   if (node.kind === "root") return 24;
@@ -1294,7 +1519,7 @@ function radiusOf(node) {
 
 function colorOf(node) {
   switch (node.kind) {
-    case "root": return "var(--n-root)";
+    case "root": return "var(--text)"; // never drawn — the envelope is hidden
     case "vs": return "var(--n-vs)";
     case "object": return "var(--n-object)";
     case "array": return "var(--n-array)";
@@ -1326,10 +1551,10 @@ function ringRadius(depth) {
   return r;
 }
 
-const LONE_CHILD_GAP = 50;
+const LONE_CHILD_GAP = 100;
 
 function computeRadialLayout() {
-  (function place(node, a0, a1, depth, forcedR) {
+  const place = (node, a0, a1, depth, forcedR) => {
     const angle = (a0 + a1) / 2;
     const r = forcedR != null ? forcedR : ringRadius(depth);
     node.targetX = r * Math.cos(angle);
@@ -1347,39 +1572,142 @@ function computeRadialLayout() {
         a += span;
       });
     }
-  })(root, 0, Math.PI * 2, 0, 0);
+  };
+  // The envelope is not drawn, so the virtual services fan around the origin
+  // themselves — at the same ring radius they occupied before, which keeps
+  // every position below them unchanged.
+  const weights = TOP_NODES.map((c) => Math.sqrt(Math.max(1, c.leafCount)));
+  const total = weights.reduce((s, w) => s + w, 0) || 1;
+  let a = 0;
+  TOP_NODES.forEach((c, i) => {
+    const span = Math.PI * 2 * (weights[i] / total);
+    place(c, a, a + span, c.depth, ringRadius(c.depth));
+    a += span;
+  });
 }
+
+// Externals sharing an owner set all resolve to the same centroid, so they
+// would stack on top of it — and on top of the owner ball. Group them by
+// that owner set and spread each group evenly around a ring whose radius
+// grows with the group size, so a VS with a dozen refs gets a readable
+// collar rather than a pile.
+const EXTERNAL_RING = new Map(); // ext.id -> { index, size }
+(function groupExternals() {
+  const groups = new Map();
+  for (const ext of EXTERNAL_NODES) {
+    const key = ext.owners.map((o) => o.id).sort((a, b) => a - b).join(",");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ext);
+  }
+  for (const list of groups.values()) {
+    list.forEach((ext, i) => EXTERNAL_RING.set(ext.id, { index: i, size: list.length }));
+  }
+})();
 
 function externalCentroid(node) {
   let sx = 0, sy = 0, n = 0;
   node.owners.forEach((o) => {
     if (!visibleIdSet.has(o.id)) return;
-    const op = sim.get(o.id);
-    if (op) { sx += op.x; sy += op.y; n++; }
+    if (!Number.isFinite(o.targetX) || !Number.isFinite(o.targetY)) return;
+    sx += o.targetX; sy += o.targetY; n++;
   });
   if (n === 0) return { x: 0, y: 0 };
-  // externals that share nearly the same owner set land on the same
-  // centroid — fan them out a little (golden-angle, stable per node) so
-  // they don't stack exactly on top of one another.
-  const idx = EXTERNAL_NODES.indexOf(node);
-  const angle = idx * 2.399963;
-  const fan = 34;
-  return { x: sx / n + Math.cos(angle) * fan, y: sy / n + Math.sin(angle) * fan };
+  const ring = EXTERNAL_RING.get(node.id) || { index: 0, size: 1 };
+  const radius = Math.max(76, 30 + ring.size * 5.5);
+  // rotate the collar off-axis so it doesn't sit on the structure links
+  const angle = (ring.index / ring.size) * Math.PI * 2 + 0.6;
+  return { x: sx / n + Math.cos(angle) * radius, y: sy / n + Math.sin(angle) * radius };
 }
 
+// Collars belonging to different owners can still intersect, and an
+// external can land on a structural ball. A few relaxation passes over the
+// external targets only (there are a few dozen, so this is cheap) pushes
+// them apart before the easing animation reads them.
+//
+// Everything here resolves against owners' *target* coords, never their
+// animated sim positions, so the result is deterministic: it is computed
+// once per rebuildVisible() and then eased toward like any other ball,
+// rather than re-relaxed on every frame.
+const RELAX_PASSES = 14;
+
 function updateExternalTargets() {
+  const ext = [];
+  const fixed = [];
   for (const node of visibleNodes) {
-    if (node.kind !== "external") continue;
-    const c = externalCentroid(node);
-    node.targetX = c.x;
-    node.targetY = c.y;
+    if (node.kind === "external") {
+      const c = externalCentroid(node);
+      node.targetX = c.x;
+      node.targetY = c.y;
+      ext.push(node);
+    } else if (typeof node.targetX === "number") {
+      fixed.push(node);
+    }
   }
+  if (!ext.length) return;
+
+  for (let pass = 0; pass < RELAX_PASSES; pass++) {
+    for (let i = 0; i < ext.length; i++) {
+      const a = ext[i];
+      const ra = radiusOf(a);
+      for (let j = i + 1; j < ext.length; j++) {
+        const b = ext[j];
+        const min = ra + radiusOf(b) + 14;
+        let dx = b.targetX - a.targetX;
+        let dy = b.targetY - a.targetY;
+        let d = Math.hypot(dx, dy);
+        if (d >= min) continue;
+        if (d < 0.001) { dx = Math.cos(i * 2.4); dy = Math.sin(i * 2.4); d = 1; }
+        const push = (min - d) / 2 / d;
+        a.targetX -= dx * push; a.targetY -= dy * push;
+        b.targetX += dx * push; b.targetY += dy * push;
+      }
+      // structural balls hold their radial position; only the external moves
+      for (const f of fixed) {
+        const min = ra + radiusOf(f) + 16;
+        let dx = a.targetX - f.targetX;
+        let dy = a.targetY - f.targetY;
+        let d = Math.hypot(dx, dy);
+        if (d >= min) continue;
+        if (d < 0.001) { dx = Math.cos(i * 2.4); dy = Math.sin(i * 2.4); d = 1; }
+        a.targetX = f.targetX + (dx / d) * min;
+        a.targetY = f.targetY + (dy / d) * min;
+      }
+    }
+  }
+}
+
+function containerChildrenOf(node) {
+  return node.children.filter((c) => c.kind !== "leaf");
+}
+
+function recomputeFocus() {
+  if (!focusMode || !selectedNode || !visibleIdSet.has(selectedNode.id)) {
+    focusSet = null;
+    return;
+  }
+  const keep = new Set();
+  const add = (n) => { if (n) keep.add(n.id); };
+  if (selectedNode.kind === "external") {
+    add(selectedNode);
+    selectedNode.owners.forEach(add);
+  } else {
+    ancestorChain(selectedNode).forEach(add);
+    containerChildrenOf(selectedNode).forEach(add);
+    for (const xr of RESOLVED_PAIRS) {
+      if (xr.a === selectedNode) add(xr.b);
+      if (xr.b === selectedNode) add(xr.a);
+    }
+    for (const l of EXTERNAL_LINKS) {
+      if (l.owner === selectedNode) add(l.ext);
+    }
+  }
+  focusSet = keep;
 }
 
 function rebuildVisible() {
   visibleNodes = [];
   visibleLinks = [];
-  (function walk(node) {
+  const walk = (node) => {
     visibleNodes.push(node);
     if (node.expanded) {
       node.children.forEach((c) => {
@@ -1388,7 +1716,8 @@ function rebuildVisible() {
         walk(c);
       });
     }
-  })(root);
+  };
+  TOP_NODES.forEach(walk);
 
   const treeIdSet = new Set(visibleNodes.map((n) => n.id));
   if (showXrefs) {
@@ -1415,7 +1744,9 @@ function rebuildVisible() {
 
   computeRadialLayout();
   updateExternalTargets();
+  recomputeFocus();
 
+  document.getElementById("stat-vs").textContent = TOP_NODES.length;
   document.getElementById("stat-visible").textContent = visibleNodes.length;
   document.getElementById("stat-leaves").textContent = TOTAL_LEAVES;
   reheat();
@@ -1432,7 +1763,6 @@ let simRunning = false;
 
 function reheat() {
   if (reducedMotion) {
-    updateExternalTargets();
     for (const node of visibleNodes) {
       const p = sim.get(node.id);
       if (!p.dragging) { p.x = node.targetX; p.y = node.targetY; }
@@ -1450,7 +1780,6 @@ function reheat() {
 }
 
 function tick() {
-  updateExternalTargets();
   let maxDelta = 0;
   for (const node of visibleNodes) {
     const p = sim.get(node.id);
@@ -1493,11 +1822,7 @@ let panX = window.innerWidth / 2;
 let panY = window.innerHeight / 2;
 let scale = 1;
 let targetPanX = panX, targetPanY = panY, targetScale = scale;
-let basePanX = panX, basePanY = panY;
 const CAMERA_EASE = 0.1;
-const FOLLOW_ENABLED = false;
-const FOLLOW_STRENGTH = 1.4;
-const MAX_FOLLOW = 400;
 
 function worldToScreen(x, y) { return { x: x * scale + panX, y: y * scale + panY }; }
 function screenToWorld(x, y) { return { x: (x - panX) / scale, y: (y - panY) / scale }; }
@@ -1510,12 +1835,18 @@ function resizeCanvas() {
   canvas.style.height = window.innerHeight + "px";
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
-window.addEventListener("resize", resizeCanvas);
+window.addEventListener("resize", () => { resizeCanvas(); render(); });
 resizeCanvas();
+
+function ballScale() { return Math.max(0.55, Math.min(1.6, scale)); }
 
 function truncateLabel(text, maxChars) {
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars - 1) + "…";
+}
+
+function alphaFor(node) {
+  return focusSet && !focusSet.has(node.id) ? 0.13 : 1;
 }
 
 function render() {
@@ -1524,7 +1855,7 @@ function render() {
 
   // subtle dot grid, gives a topology-map feel
   const gridStep = 42 * Math.min(1.4, Math.max(0.5, scale));
-  ctx.fillStyle = "rgba(255,255,255,0.035)";
+  ctx.fillStyle = "rgba(180, 196, 226, 0.045)";
   const offX = panX % gridStep;
   const offY = panY % gridStep;
   for (let x = offX; x < w; x += gridStep) {
@@ -1535,18 +1866,30 @@ function render() {
 
   // links — the JSON parent/child structure
   if (showTree) {
-    ctx.strokeStyle = resolvedColor("var(--link-line)");
+    const lineColor = resolvedColor("var(--link-line)");
     ctx.lineWidth = Math.max(1, scale);
-    ctx.beginPath();
-    for (const l of visibleLinks) {
-      const a = sim.get(l.source.id);
-      const b = sim.get(l.target.id);
-      const sa = worldToScreen(a.x, a.y);
-      const sb = worldToScreen(b.x, b.y);
-      ctx.moveTo(sa.x, sa.y);
-      ctx.lineTo(sb.x, sb.y);
+    // pass 0 draws the dimmed links, pass 1 the bright ones — with focus off
+    // nothing is dimmed, so the dim pass must be skipped entirely
+    for (const pass of (focusSet ? [0, 1] : [1])) {
+      ctx.strokeStyle = lineColor;
+      ctx.globalAlpha = pass === 0 ? 0.13 : 1;
+      ctx.beginPath();
+      let drew = false;
+      for (const l of visibleLinks) {
+        const dim = alphaFor(l.source) < 1 || alphaFor(l.target) < 1;
+        if ((pass === 0) !== dim) continue;
+        const a = sim.get(l.source.id);
+        const b = sim.get(l.target.id);
+        if (!a || !b) continue;
+        const sa = worldToScreen(a.x, a.y);
+        const sb = worldToScreen(b.x, b.y);
+        ctx.moveTo(sa.x, sa.y);
+        ctx.lineTo(sb.x, sb.y);
+        drew = true;
+      }
+      if (drew) ctx.stroke();
     }
-    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   // cross-reference links — same UUID appearing under two different balls.
@@ -1559,10 +1902,11 @@ function render() {
     const weakColorStr = resolvedColor("var(--xref-line-weak)");
 
     ctx.strokeStyle = resolvedColorStr;
-    ctx.globalAlpha = 0.7;
     ctx.setLineDash([7, 4]);
     for (const xr of RESOLVED_PAIRS) {
       if (!visibleIdSet.has(xr.a.id) || !visibleIdSet.has(xr.b.id)) continue;
+      const dim = alphaFor(xr.a) < 1 || alphaFor(xr.b) < 1;
+      ctx.globalAlpha = dim ? 0.1 : 0.7;
       const a = sim.get(xr.a.id);
       const b = sim.get(xr.b.id);
       const sa = worldToScreen(a.x, a.y);
@@ -1580,49 +1924,87 @@ function render() {
     }
 
     ctx.strokeStyle = weakColorStr;
-    ctx.globalAlpha = 0.45;
     ctx.setLineDash([2, 4]);
     ctx.lineWidth = Math.max(1, scale * 0.9);
-    ctx.beginPath();
-    for (const link of EXTERNAL_LINKS) {
-      if (!visibleIdSet.has(link.owner.id) || !visibleIdSet.has(link.ext.id)) continue;
-      const a = sim.get(link.owner.id);
-      const b = sim.get(link.ext.id);
-      const sa = worldToScreen(a.x, a.y);
-      const sb = worldToScreen(b.x, b.y);
-      ctx.moveTo(sa.x, sa.y);
-      ctx.lineTo(sb.x, sb.y);
+    for (const pass of (focusSet ? [0, 1] : [1])) {
+      ctx.globalAlpha = pass === 0 ? 0.08 : 0.45;
+      ctx.beginPath();
+      let drew = false;
+      for (const link of EXTERNAL_LINKS) {
+        if (!visibleIdSet.has(link.owner.id) || !visibleIdSet.has(link.ext.id)) continue;
+        const dim = alphaFor(link.owner) < 1 || alphaFor(link.ext) < 1;
+        if ((pass === 0) !== dim) continue;
+        const a = sim.get(link.owner.id);
+        const b = sim.get(link.ext.id);
+        const sa = worldToScreen(a.x, a.y);
+        const sb = worldToScreen(b.x, b.y);
+        ctx.moveTo(sa.x, sa.y);
+        ctx.lineTo(sb.x, sb.y);
+        drew = true;
+      }
+      if (drew) ctx.stroke();
     }
-    ctx.stroke();
 
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
   }
 
   // nodes
+  const bs = ballScale();
   const fontSize = Math.max(9, Math.min(13, 11 * scale));
   ctx.font = `500 ${fontSize}px "IBM Plex Mono", monospace`;
   ctx.textBaseline = "middle";
+  const bgColor = resolvedColor("var(--bg)");
+  const accentColor = resolvedColor("var(--accent)");
+  const matchColor = resolvedColor("var(--match)");
+  const labelQueue = [];
 
   for (const node of visibleNodes) {
     const p = sim.get(node.id);
+    if (!p) continue;
     const s = worldToScreen(p.x, p.y);
-    const r = radiusOf(node) * Math.max(0.55, Math.min(1.6, scale));
+    const r = radiusOf(node) * bs;
+    // cheap viewport cull — labels stretch to the right, so pad generously
+    if (s.x < -260 || s.x > w + 60 || s.y < -60 || s.y > h + 60) continue;
+
     const isHover = node === hoveredNode;
     const isSelected = node === selectedNode;
+    const isMatch = matchedBallIds.has(node.id);
+    const a = alphaFor(node);
+    ctx.globalAlpha = a;
+
+    if (isSelected) {
+      // soft halo so the selection reads instantly at any zoom
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 11, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(97, 213, 192, 0.11)";
+      ctx.fill();
+    }
 
     ctx.beginPath();
     ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
     ctx.fillStyle = resolvedColor(colorOf(node));
     ctx.fill();
 
-    ctx.lineWidth = node.expanded ? 0 : 2;
-    ctx.strokeStyle = resolvedColor("var(--bg)");
-    if (!node.expanded) ctx.stroke();
+    if (!node.expanded && node.kind !== "external") {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = bgColor;
+      ctx.stroke();
+    }
+
+    if (isMatch) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = matchColor;
+      ctx.globalAlpha = a * 0.9;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 6.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = a;
+    }
 
     if (isHover || isSelected) {
       ctx.lineWidth = 2.5;
-      ctx.strokeStyle = resolvedColor("var(--accent)");
+      ctx.strokeStyle = accentColor;
       ctx.beginPath();
       ctx.arc(s.x, s.y, r + 3.5, 0, Math.PI * 2);
       ctx.stroke();
@@ -1631,7 +2013,7 @@ function render() {
     // collapsed-container child count badge (only counts children that become balls)
     const containerChildCount = node.children.reduce((n, c) => n + (c.kind !== "leaf" ? 1 : 0), 0);
     if (!node.expanded && containerChildCount > 0 && r > 5) {
-      ctx.fillStyle = resolvedColor("var(--bg)");
+      ctx.fillStyle = bgColor;
       ctx.font = `600 ${Math.max(8, fontSize - 2)}px "IBM Plex Mono", monospace`;
       ctx.textAlign = "center";
       ctx.fillText(String(containerChildCount), s.x, s.y + 0.5);
@@ -1639,22 +2021,122 @@ function render() {
       ctx.textAlign = "left";
     }
 
-    // label
-    if (r > 2.5) {
-      const label = truncateLabel(String(node.key), 26);
-      ctx.fillStyle = resolvedColor(node.kind === "root" || node.kind === "vs" ? "var(--text)" : "var(--text-dim)");
-      ctx.textAlign = "left";
-      ctx.fillText(label, s.x + r + 6, s.y);
-    }
+    // Labels are placed in a second pass so important ones win collisions.
+    let priority = 0;
+    if (isSelected || isHover) priority = 100;
+    else if (node.kind === "root" || node.kind === "vs") priority = 80;
+    else if (isMatch) priority = 70;
+    else if (selectedNode && focusSet && focusSet.has(node.id)) priority = 60;
+    else if (node.kind === "external") priority = 20;
+    else priority = 40 + Math.min(19, node.depth ? 19 - node.depth : 19);
+    labelQueue.push({ node, s, r, priority, alpha: a });
   }
+
+  ctx.globalAlpha = 1;
+  drawLabels(labelQueue, fontSize, w, h);
+}
+
+// Label placement: highest-priority labels claim their box first, and any
+// later label whose box would collide is dropped. Keeps a dense expansion
+// legible instead of stacking dozens of overlapping names.
+function drawLabels(queue, fontSize, w, h) {
+  queue.sort((a, b) => b.priority - a.priority || b.r - a.r);
+  // Seed the occupancy map with every ball, so a label never prints across
+  // a neighbouring ball — the collision test then handles both cases.
+  const placed = queue.map((q) => ({
+    x1: q.s.x - q.r, x2: q.s.x + q.r, y1: q.s.y - q.r, y2: q.s.y + q.r,
+  }));
+  const lineH = fontSize + 5;
+  const overlaps = (box) =>
+    placed.some((q) => !(box.x2 < q.x1 || box.x1 > q.x2 || box.y2 < q.y1 || box.y1 > q.y2));
+
+  for (const item of queue) {
+    const { node, s, r, priority } = item;
+    if (r <= 2.5) continue;
+    if (priority < 60 && fontSize < 9.5 && scale < 0.55) continue; // too small to read anyway
+    const label = truncateLabel(String(node.key), 26);
+    const width = ctx.measureText(label).width;
+    const x1 = s.x + r + 6;
+    const box = { x1, x2: x1 + width, y1: s.y - lineH / 2, y2: s.y + lineH / 2 };
+    if (overlaps(box)) continue;
+    placed.push(box);
+
+    const isPrimary = node.kind === "root" || node.kind === "vs" || priority >= 100;
+    ctx.globalAlpha = item.alpha;
+    if (isPrimary) {
+      // a small plate keeps big labels readable over links
+      ctx.fillStyle = "rgba(7, 11, 20, 0.74)";
+      ctx.fillRect(box.x1 - 4, box.y1, width + 8, lineH);
+    }
+    ctx.fillStyle = resolvedColor(isPrimary ? "var(--text)" : "var(--text-dim)");
+    ctx.textAlign = "left";
+    ctx.fillText(label, x1, s.y);
+  }
+  ctx.globalAlpha = 1;
 }
 
 /* ---------------------------------------------------------------------
-   6. Interaction: pan, zoom, drag, click
+   6. Camera helpers
+--------------------------------------------------------------------- */
+const MIN_BOX = 560; // don't zoom past this much world-space in view
+
+function frameBox(minX, minY, maxX, maxY) {
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const bw = Math.max(MIN_BOX, maxX - minX);
+  const bh = Math.max(MIN_BOX, maxY - minY);
+  const panelW = detailEl.classList.contains("open") ? Math.min(400, window.innerWidth * 0.92) : 0;
+  const viewW = Math.max(260, window.innerWidth - panelW);
+  const viewH = Math.max(200, window.innerHeight - 80);
+
+  targetScale = Math.max(0.18, Math.min(1.7, Math.min(viewW / bw, viewH / bh)));
+  targetPanX = viewW / 2 - cx * targetScale;
+  targetPanY = window.innerHeight / 2 + 24 - cy * targetScale;
+  reheat();
+}
+
+function focusOn(node) {
+  const kids =
+    node.kind === "external"
+      ? node.owners.filter((o) => visibleIdSet.has(o.id))
+      : node.expanded
+      ? containerChildrenOf(node)
+      : [];
+  const box = [node, ...kids];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  box.forEach((n) => {
+    const pad = radiusOf(n) + 90;
+    minX = Math.min(minX, n.targetX - pad);
+    maxX = Math.max(maxX, n.targetX + pad);
+    minY = Math.min(minY, n.targetY - pad);
+    maxY = Math.max(maxY, n.targetY + pad);
+  });
+  frameBox(minX, minY, maxX, maxY);
+}
+
+function fitAll() {
+  if (!visibleNodes.length) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of visibleNodes) {
+    const pad = radiusOf(n) + 60;
+    const x = n.targetX, y = n.targetY;
+    if (typeof x !== "number" || typeof y !== "number") continue;
+    minX = Math.min(minX, x - pad);
+    maxX = Math.max(maxX, x + pad);
+    minY = Math.min(minY, y - pad);
+    maxY = Math.max(maxY, y + pad);
+  }
+  if (minX === Infinity) return;
+  frameBox(minX, minY, maxX, maxY);
+}
+
+/* ---------------------------------------------------------------------
+   7. Interaction: pan, zoom, drag, click
 --------------------------------------------------------------------- */
 let hoveredNode = null;
 let selectedNode = null;
-let pointerDownInfo = null; // {node, isPan, startX, startY, moved}
+let pointerDownInfo = null;
+let lastClick = { node: null, t: 0 };
 
 function hitTest(clientX, clientY) {
   const rect = canvas.getBoundingClientRect();
@@ -1662,10 +2144,11 @@ function hitTest(clientX, clientY) {
   for (let i = visibleNodes.length - 1; i >= 0; i--) {
     const node = visibleNodes[i];
     const p = sim.get(node.id);
-    const r = radiusOf(node) * Math.max(0.55, Math.min(1.6, scale)) / scale;
+    if (!p) continue;
+    const r = (radiusOf(node) * ballScale()) / scale;
     const dx = world.x - p.x;
     const dy = world.y - p.y;
-    if (dx * dx + dy * dy <= (r + 3) * (r + 3)) return node;
+    if (dx * dx + dy * dy <= (r + 4) * (r + 4)) return node;
   }
   return null;
 }
@@ -1674,41 +2157,26 @@ canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
   const node = hitTest(e.clientX, e.clientY);
   pointerDownInfo = { node, startX: e.clientX, startY: e.clientY, moved: false, lastX: e.clientX, lastY: e.clientY };
-  if (node) {
-    sim.get(node.id).dragging = true;
-  } else {
-    canvas.classList.add("grabbing");
-  }
+  if (node) sim.get(node.id).dragging = true;
+  else canvas.classList.add("grabbing");
+  hideTooltip();
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  const hover = hitTest(e.clientX, e.clientY);
-  if (hover !== hoveredNode) {
-    hoveredNode = hover;
-    canvas.classList.toggle("hovering", !!hover && !pointerDownInfo);
-  }
-
   if (!pointerDownInfo) {
-    if (FOLLOW_ENABLED) {
-      const rect = canvas.getBoundingClientRect();
-      const mx = e.clientX - rect.left;
-      const my = e.clientY - rect.top;
-      const cx = window.innerWidth / 2;
-      const cy = window.innerHeight / 2;
-      // joystick model: (0,0) at the exact canvas center, deflection grows
-      // linearly toward the edges and saturates at MAX_FOLLOW like a stick
-      // hitting its gate — direction is circular, not clamped per axis.
-      const nx = (mx - cx) / cx;
-      const ny = (my - cy) / cy;
-      const mag = Math.min(1, Math.hypot(nx, ny) * FOLLOW_STRENGTH);
-      const angle = Math.atan2(ny, nx);
-      const deflect = mag * MAX_FOLLOW;
-      targetPanX = basePanX - Math.cos(angle) * deflect;
-      targetPanY = basePanY - Math.sin(angle) * deflect;
-      reheat();
+    const hover = hitTest(e.clientX, e.clientY);
+    if (hover !== hoveredNode) {
+      hoveredNode = hover;
+      canvas.classList.toggle("hovering", !!hover);
+      if (hover) showTooltip(hover, e.clientX, e.clientY);
+      else hideTooltip();
+      render();
+    } else if (hover) {
+      moveTooltip(e.clientX, e.clientY);
     }
     return;
   }
+
   const dx = e.clientX - pointerDownInfo.lastX;
   const dy = e.clientY - pointerDownInfo.lastY;
   const totalMove = Math.hypot(e.clientX - pointerDownInfo.startX, e.clientY - pointerDownInfo.startY);
@@ -1728,32 +2196,31 @@ canvas.addEventListener("pointermove", (e) => {
     panY += dy;
     targetPanX = panX;
     targetPanY = panY;
-    basePanX = panX;
-    basePanY = panY;
     render();
   }
 });
 
-function endPointer(e) {
+function endPointer() {
   if (!pointerDownInfo) return;
   const info = pointerDownInfo;
   pointerDownInfo = null;
   canvas.classList.remove("grabbing");
 
-  if (info.node) {
-    const p = sim.get(info.node.id);
-    p.dragging = false;
-    if (!info.moved) {
-      handleNodeClick(info.node);
-    } else {
-      reheat();
-    }
-  }
+  if (!info.node) return;
+  const p = sim.get(info.node.id);
+  if (p) p.dragging = false;
+  if (info.moved) { reheat(); return; }
+
+  const now = performance.now();
+  const isDouble = lastClick.node === info.node && now - lastClick.t < 320;
+  lastClick = { node: info.node, t: now };
+  if (isDouble) collapseNode(info.node);
+  else handleNodeClick(info.node);
 }
 canvas.addEventListener("pointerup", endPointer);
 canvas.addEventListener("pointercancel", endPointer);
 canvas.addEventListener("pointerleave", () => {
-  if (!pointerDownInfo) { hoveredNode = null; canvas.classList.remove("hovering"); render(); }
+  if (!pointerDownInfo) { hoveredNode = null; canvas.classList.remove("hovering"); hideTooltip(); render(); }
 });
 
 canvas.addEventListener("wheel", (e) => {
@@ -1762,173 +2229,496 @@ canvas.addEventListener("wheel", (e) => {
   const mx = e.clientX - rect.left, my = e.clientY - rect.top;
   const before = screenToWorld(mx, my);
   const factor = Math.exp(-e.deltaY * 0.0016);
-  scale = Math.max(0.15, Math.min(3.2, scale * factor));
+  scale = Math.max(0.12, Math.min(3.2, scale * factor));
   const after = worldToScreen(before.x, before.y);
   panX += mx - after.x;
   panY += my - after.y;
   targetPanX = panX;
   targetPanY = panY;
   targetScale = scale;
-  basePanX = panX;
-  basePanY = panY;
+  hideTooltip();
   render();
 }, { passive: false });
 
-function focusOn(node) {
-  const kids =
-    node.kind === "external"
-      ? node.owners.filter((o) => visibleIdSet.has(o.id))
-      : node.expanded
-      ? node.children.filter((c) => c.kind !== "leaf")
-      : [];
-  const box = [node, ...kids];
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  box.forEach((n) => {
-    const pad = radiusOf(n) + 90;
-    minX = Math.min(minX, n.targetX - pad);
-    maxX = Math.max(maxX, n.targetX + pad);
-    minY = Math.min(minY, n.targetY - pad);
-    maxY = Math.max(maxY, n.targetY + pad);
-  });
-  const w = Math.max(80, maxX - minX);
-  const h = Math.max(80, maxY - minY);
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-
-  const panelW = Math.min(380, window.innerWidth * 0.88);
-  const viewW = Math.max(240, window.innerWidth - panelW);
-
-  targetScale = Math.max(0.3, Math.min(2.4, Math.min(viewW / w, window.innerHeight / h)));
-  targetPanX = viewW / 2 - cx * targetScale;
-  targetPanY = window.innerHeight / 2 - cy * targetScale;
-  basePanX = targetPanX;
-  basePanY = targetPanY;
+/* Click selects and opens; it only ever expands. Collapsing is its own
+   gesture (double-click, or the − button in the panel) so that clicking
+   an already-open ball to re-read its fields never throws away the
+   subtree you just expanded. */
+function handleNodeClick(node) {
+  selectNode(node);
+  if (!node.expanded && containerChildrenOf(node).length) {
+    node.expanded = true;
+    rebuildVisible();
+  } else {
+    recomputeFocus();
+  }
+  focusOn(node);
 }
 
-function handleNodeClick(node) {
-  selectedNode = node;
-  showFieldsPanel(node);
-  node.expanded = !node.expanded;
+function collapseNode(node) {
+  if (node.kind === "external" || !node.expanded) return;
+  node.expanded = false;
+  selectNode(node);
   rebuildVisible();
   focusOn(node);
-  reheat();
+}
+
+function selectNode(node) {
+  selectedNode = node;
+  showFieldsPanel(node);
+  recomputeFocus();
+  render();
+}
+
+/* Reveal: expanding every ancestor is what makes a ball part of the
+   visible set — and computeRadialLayout() only assigns target coords to
+   descendants of expanded nodes. So ancestors must be expanded, then
+   rebuildVisible() run, before any camera move reads targetX/targetY. */
+function revealNode(node, opts) {
+  const ball = node.kind === "leaf" ? node.parent : node;
+  if (ball.kind === "external") {
+    if (!showXrefs) {
+      showXrefs = true;
+      document.getElementById("btn-xrefs").classList.add("active");
+    }
+    let a = ball.owners[0];
+    while (a) { a.expanded = true; a = a.parent; }
+  } else {
+    let a = ball.parent;
+    while (a) { a.expanded = true; a = a.parent; }
+  }
+  rebuildVisible();
+  selectedNode = ball;
+  showFieldsPanel(ball, opts);
+  recomputeFocus();
+  focusOn(ball);
+  render();
 }
 
 /* ---------------------------------------------------------------------
-   7. Detail drawer — shows a container ball's own leaf fields
+   8. Hover tooltip
 --------------------------------------------------------------------- */
-const detailEl = document.getElementById("detail");
-const stageLabelEl = document.getElementById("stage-label");
+const tooltipEl = document.getElementById("tooltip");
 
-function containerLabel(kind) {
-  return { root: "Response root", vs: "Virtual service", object: "Object", array: "Array" }[kind] || kind;
+function kindLabel(kind) {
+  return { root: "Response root", vs: "Virtual service", object: "Object", array: "Array", external: "External object", leaf: "Value" }[kind] || kind;
 }
 
-function showFieldsPanel(node) {
+function previewValue(v) {
+  if (v === null) return "null";
+  if (v === "") return "(empty)";
+  const s = String(v);
+  return s.length > 46 ? s.slice(0, 45) + "…" : s;
+}
+
+function showTooltip(node, x, y) {
+  let meta = "";
+  let preview = "";
   if (node.kind === "external") {
-    document.getElementById("detail-type-dot").style.background = resolvedColor(colorOf(node));
-    document.getElementById("detail-type-text").textContent = "External object";
-    document.getElementById("detail-key").textContent = node.key;
-
-    document.getElementById("detail-path").innerHTML =
-      `<span class="seg">not listed in this JSON</span><span class="sep">›</span><span class="seg">${escapeHtml(node.uuid)}</span>`;
-
-    document.getElementById("detail-fields").innerHTML = node.owners
-      .map(
-        (o) => `
-          <div class="field-row">
-            <div class="field-row-head">
-              <span class="field-dot" style="background:${resolvedColor(colorOf(o))}"></span>
-              <span class="field-key">${escapeHtml(o.key)}</span>
-            </div>
-            <div class="field-value">references this object</div>
-          </div>`
-      )
-      .join("");
-
-    document.getElementById("detail-meta").innerHTML = `
-      <div><span class="field-label">Referenced by</span><span class="v">${node.owners.length} balls</span></div>
-      <div><span class="field-label">UUID</span><span class="v">${escapeHtml(node.uuid.slice(0, 8))}…</span></div>
-    `;
-
-    detailEl.classList.add("open");
-    return;
+    meta = `<span>referenced by <b>${node.owners.length}</b></span><span>uuid <b>${escapeHtml(node.uuid.slice(0, 8))}…</b></span>`;
+    preview = `<div class="tt-preview">not listed in this JSON</div>`;
+  } else {
+    const fields = node.children.filter((c) => c.kind === "leaf");
+    const nested = containerChildrenOf(node).length;
+    meta =
+      `<span>fields <b>${fields.length}</b></span>` +
+      `<span>nested <b>${nested}</b></span>` +
+      `<span>values <b>${node.leafCount}</b></span>`;
+    const shown = fields.slice(0, 3)
+      .map((f) => `${escapeHtml(String(f.key))} <span>${escapeHtml(previewValue(f.value))}</span>`)
+      .join("<br />");
+    if (shown) {
+      const more = fields.length > 3 ? `<br />+ ${fields.length - 3} more` : "";
+      preview = `<div class="tt-preview">${shown}${more}</div>`;
+    }
   }
+  tooltipEl.innerHTML =
+    `<div class="tt-kind"><span class="tt-dot" style="background:${resolvedColor(colorOf(node))}"></span>${kindLabel(node.kind)}</div>` +
+    `<div class="tt-key">${escapeHtml(String(node.key))}</div>` +
+    `<div class="tt-meta">${meta}</div>` + preview;
+  tooltipEl.classList.add("show");
+  moveTooltip(x, y);
+}
+
+function moveTooltip(x, y) {
+  const r = tooltipEl.getBoundingClientRect();
+  let left = x + 16;
+  let top = y + 16;
+  if (left + r.width > window.innerWidth - 12) left = x - r.width - 16;
+  if (top + r.height > window.innerHeight - 12) top = y - r.height - 16;
+  tooltipEl.style.left = Math.max(12, left) + "px";
+  tooltipEl.style.top = Math.max(12, top) + "px";
+}
+
+function hideTooltip() { tooltipEl.classList.remove("show"); }
+
+/* ---------------------------------------------------------------------
+   9. Detail panel
+--------------------------------------------------------------------- */
+const detailEl = document.getElementById("detail");
+const fieldFilterEl = document.getElementById("field-filter");
+let panelNode = null;
+let panelHighlight = "";
+let flashKey = null;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function markHtml(text, needle) {
+  const safe = escapeHtml(text);
+  if (!needle) return safe;
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
+  return safe.replace(re, (m) => `<mark>${m}</mark>`);
+}
+
+function showFieldsPanel(node, opts) {
+  panelNode = node;
+  panelHighlight = (opts && opts.highlight) || "";
+  flashKey = (opts && opts.flashKey) || null;
+  fieldFilterEl.value = "";
 
   document.getElementById("detail-type-dot").style.background = resolvedColor(colorOf(node));
-  document.getElementById("detail-type-text").textContent = containerLabel(node.kind);
+  document.getElementById("detail-type-text").textContent = kindLabel(node.kind);
   document.getElementById("detail-key").textContent = node.key;
 
-  const pathEl = document.getElementById("detail-path");
-  pathEl.innerHTML = node.path
-    .map((seg) => `<span class="seg">${escapeHtml(String(seg))}</span>`)
-    .join('<span class="sep">›</span>');
+  const toggleBtn = document.getElementById("detail-toggle");
+  const canToggle = node.kind !== "external" && containerChildrenOf(node).length > 0;
+  toggleBtn.style.display = canToggle ? "" : "none";
+  toggleBtn.textContent = node.expanded ? "−" : "+";
+  toggleBtn.title = node.expanded ? "Collapse this ball" : "Expand this ball";
+  document.getElementById("detail-copy").style.display = node.kind === "external" ? "none" : "";
 
-  const fields = node.children.filter((c) => c.kind === "leaf");
-  const containerChildren = node.children.filter((c) => c.kind !== "leaf");
-  const fieldsEl = document.getElementById("detail-fields");
-  if (fields.length === 0) {
-    fieldsEl.innerHTML = `<div class="fields-empty">No direct values on this node — expand it to explore nested items.</div>`;
-  } else {
-    fieldsEl.innerHTML = fields
-      .map((f) => {
-        const isEmpty = f.value === "" || f.value === null;
-        const display = f.value === "" ? "(empty string)" : f.value === null ? "null" : String(f.value);
-        return `
-          <div class="field-row">
-            <div class="field-row-head">
-              <span class="field-dot" style="background:${resolvedColor(colorOf(f))}"></span>
-              <span class="field-key">${escapeHtml(String(f.key))}</span>
-            </div>
-            <div class="field-value${isEmpty ? " is-empty" : ""}">${escapeHtml(display)}</div>
-          </div>`;
-      })
-      .join("");
+  renderPath(node);
+  renderChildren(node);
+  renderFields(node, "");
+
+  detailEl.classList.add("open");
+  document.body.classList.add("panel-open");
+
+  if (flashKey) {
+    requestAnimationFrame(() => {
+      const row = document.querySelector('.field-row[data-key="' + cssEscape(flashKey) + '"]');
+      if (row) {
+        row.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
+        row.classList.add("flash");
+      }
+    });
   }
+}
 
-  const metaEl = document.getElementById("detail-meta");
-  metaEl.innerHTML = `
-    <div><span class="field-label">Fields</span><span class="v">${fields.length}</span></div>
-    <div><span class="field-label">Nested</span><span class="v">${containerChildren.length}</span></div>
+function cssEscape(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+function renderPath(node) {
+  const el = document.getElementById("detail-path");
+  if (node.kind === "external") {
+    el.innerHTML =
+      `<span class="seg">not listed in this JSON</span><span class="sep">›</span><span class="seg last">${escapeHtml(node.uuid)}</span>`;
+    return;
+  }
+  const chain = ancestorChain(node);
+  el.innerHTML = chain
+    .map((n, i) => {
+      const last = i === chain.length - 1;
+      return `<button class="seg${last ? " last" : ""}" data-id="${n.id}"${last ? " disabled" : ""}>${escapeHtml(String(n.key))}</button>`;
+    })
+    .join('<span class="sep">›</span>');
+  el.querySelectorAll("button.seg[data-id]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const target = CONTAINERS.find((c) => String(c.id) === b.dataset.id);
+      if (target) revealNode(target);
+    });
+  });
+}
+
+function renderChildren(node) {
+  const sec = document.getElementById("detail-children-sec");
+  const el = document.getElementById("detail-children");
+  const kids = node.kind === "external" ? [] : containerChildrenOf(node);
+  const list = node.kind === "external" ? node.owners : kids;
+  if (!list.length) { sec.style.display = "none"; return; }
+  sec.style.display = "";
+  sec.querySelector(".field-label").textContent = node.kind === "external" ? "Referenced by" : "Nested balls";
+  el.innerHTML = list
+    .map((c) => {
+      const n = c.kind === "external" ? "" : `<span class="chip-n">${c.leafCount}</span>`;
+      return `<button class="child-chip" data-id="${c.id}">
+        <span class="chip-dot" style="background:${resolvedColor(colorOf(c))}"></span>
+        <span class="chip-name">${escapeHtml(String(c.key))}</span>${n}
+      </button>`;
+    })
+    .join("");
+  el.querySelectorAll("button.child-chip").forEach((b) => {
+    b.addEventListener("click", () => {
+      const target = list.find((c) => String(c.id) === b.dataset.id);
+      if (target) revealNode(target);
+    });
+  });
+}
+
+// A leaf value shaped like a ref becomes a button that jumps to whatever
+// ball that UUID resolves to — a listed object, or the external stand-in.
+function refButtonFor(value, selfNode) {
+  if (typeof value !== "string") return null;
+  REF_RE.lastIndex = 0;
+  const m = REF_RE.exec(value);
+  REF_RE.lastIndex = 0;
+  if (!m) return null;
+  const target = REF_TARGET.get(m[2]);
+  if (!target || target === selfNode || HIDDEN.has(target.id)) return null;
+  const name = target.kind === "external" ? `${target.key} · ${target.uuid.slice(0, 8)}…` : String(target.key);
+  return { targetId: String(target.id), label: `${m[1]} → ${name}` };
+}
+
+function renderFields(node, filter) {
+  const el = document.getElementById("detail-fields");
+  const countEl = document.getElementById("detail-fields-count");
+  const sec = document.getElementById("detail-fields-sec");
+
+  if (node.kind === "external") {
+    sec.style.display = "none";
+    document.getElementById("detail-meta").innerHTML = `
+      <div><span class="field-label">Referenced by</span><span class="v">${node.owners.length} balls</span></div>
+      <div><span class="field-label">Ref type</span><span class="v">${escapeHtml(node.key)}</span></div>
+      <div><span class="field-label">UUID</span><span class="v">${escapeHtml(node.uuid.slice(0, 8))}…</span></div>
+    `;
+    return;
+  }
+  sec.style.display = "";
+
+  const all = node.children.filter((c) => c.kind === "leaf");
+  const f = filter.trim().toLowerCase();
+  const fields = f
+    ? all.filter((c) => String(c.key).toLowerCase().includes(f) || String(c.value).toLowerCase().includes(f))
+    : all;
+
+  fieldFilterEl.style.display = all.length > 8 ? "" : "none";
+  countEl.textContent = f ? `${fields.length} / ${all.length}` : all.length ? String(all.length) : "";
+
+  // written before the early returns below — these counts describe the node,
+  // not the filtered field list, and a ball with no direct fields still needs them
+  document.getElementById("detail-meta").innerHTML = `
+    <div><span class="field-label">Fields</span><span class="v">${all.length}</span></div>
+    <div><span class="field-label">Nested</span><span class="v">${containerChildrenOf(node).length}</span></div>
+    <div><span class="field-label">Values below</span><span class="v">${node.leafCount}</span></div>
     <div><span class="field-label">Depth</span><span class="v">${node.depth}</span></div>
   `;
 
-  detailEl.classList.add("open");
-}
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-document.getElementById("detail-close").addEventListener("click", () => {
-  detailEl.classList.remove("open");
-  selectedNode = null;
-  render();
-});
-window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && detailEl.classList.contains("open")) {
-    detailEl.classList.remove("open");
-    selectedNode = null;
-    render();
+  if (all.length === 0) {
+    el.innerHTML = `<div class="fields-empty">No direct values on this node — open a nested ball to see its fields.</div>`;
+    return;
   }
+  if (fields.length === 0) {
+    el.innerHTML = `<div class="fields-empty">No field matches “${escapeHtml(filter)}”.</div>`;
+    return;
+  }
+
+  const highlight = f || panelHighlight;
+  el.innerHTML = fields
+    .map((leaf) => {
+      const isEmpty = leaf.value === "" || leaf.value === null;
+      const display = leaf.value === "" ? "(empty string)" : leaf.value === null ? "null" : String(leaf.value);
+      const ref = refButtonFor(leaf.value, node);
+      const valueHtml = ref
+        ? `<button class="ref-link" data-ref="${escapeHtml(ref.targetId)}" title="${escapeHtml(display)}">${escapeHtml(ref.label)}<span class="arrow">↗</span></button>`
+        : `<div class="field-value${isEmpty ? " is-empty" : ""}">${markHtml(display, highlight)}</div>`;
+      return `
+        <div class="field-row" data-key="${escapeHtml(String(leaf.key))}">
+          <div class="field-row-head">
+            <span class="field-dot" style="background:${resolvedColor(colorOf(leaf))}"></span>
+            <span class="field-key">${markHtml(String(leaf.key), highlight)}</span>
+            <button class="copy-btn" data-copy="${escapeHtml(display)}" title="Copy value">copy</button>
+          </div>
+          ${valueHtml}
+        </div>`;
+    })
+    .join("");
+
+  el.querySelectorAll("button.copy-btn").forEach((b) => {
+    b.addEventListener("click", () => copyText(b.dataset.copy, "Value copied"));
+  });
+  el.querySelectorAll("button.ref-link").forEach((b) => {
+    b.addEventListener("click", () => {
+      const id = b.dataset.ref;
+      const target = CONTAINERS.find((c) => String(c.id) === id) || EXTERNAL_NODES.find((c) => String(c.id) === id);
+      if (target) revealNode(target);
+    });
+  });
+
+}
+
+fieldFilterEl.addEventListener("input", () => {
+  if (panelNode) renderFields(panelNode, fieldFilterEl.value);
+});
+
+function closePanel() {
+  detailEl.classList.remove("open");
+  document.body.classList.remove("panel-open");
+  selectedNode = null;
+  panelNode = null;
+  recomputeFocus();
+  render();
+}
+document.getElementById("detail-close").addEventListener("click", closePanel);
+document.getElementById("detail-toggle").addEventListener("click", () => {
+  if (!panelNode) return;
+  if (panelNode.expanded) collapseNode(panelNode);
+  else handleNodeClick(panelNode);
+});
+document.getElementById("detail-copy").addEventListener("click", () => {
+  if (!panelNode) return;
+  copyText(JSON.stringify(panelNode.raw, null, 2), "Subtree JSON copied");
 });
 
 /* ---------------------------------------------------------------------
-   8. Toolbar
+   10. Toast + clipboard
 --------------------------------------------------------------------- */
-document.getElementById("btn-expand").addEventListener("click", () => {
+const toastEl = document.getElementById("toast");
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1600);
+}
+function copyText(text, msg) {
+  const done = () => toast(msg);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch (_) { toast("Copy failed"); }
+  ta.remove();
+}
+
+/* ---------------------------------------------------------------------
+   11. Search overlay
+--------------------------------------------------------------------- */
+const searchOverlay = document.getElementById("search-overlay");
+const searchInput = document.getElementById("search-input");
+const searchResults = document.getElementById("search-results");
+const searchCount = document.getElementById("search-count");
+let searchHits = [];
+let searchSel = 0;
+
+function openSearch() {
+  searchOverlay.classList.add("open");
+  searchInput.focus();
+  searchInput.select();
+  updateSearch();
+}
+function closeSearch() {
+  searchOverlay.classList.remove("open");
+  matchedBallIds = new Set();
+  render();
+}
+
+function updateSearch() {
+  const q = searchInput.value;
+  searchHits = runSearch(q);
+  searchSel = 0;
+  matchedBallIds = new Set(searchHits.map((e) => e.ball && e.ball.id).filter((id) => id !== undefined));
+  searchCount.textContent = q.trim()
+    ? `${searchHits.length}${searchHits.length === SEARCH_LIMIT ? "+" : ""} hits`
+    : `${INDEX.length} entries`;
+
+  if (!q.trim()) {
+    searchResults.innerHTML = `<div class="sr-empty">Type to search every key, value and path in the response.</div>`;
+    render();
+    return;
+  }
+  if (!searchHits.length) {
+    searchResults.innerHTML = `<div class="sr-empty">Nothing matches “${escapeHtml(q)}”.</div>`;
+    render();
+    return;
+  }
+  searchResults.innerHTML = searchHits
+    .map((e, i) => {
+      const tag = e.isExternal ? "external" : e.isLeaf ? "field" : kindLabel(e.node.kind).toLowerCase();
+      const detail = e.isLeaf || e.isExternal ? ` <span style="color:var(--text-faint)">= ${escapeHtml(previewValue(e.value))}</span>` : ` <span style="color:var(--text-faint)">${escapeHtml(e.value)}</span>`;
+      return `<div class="sr-row${i === searchSel ? " sel" : ""}" data-i="${i}">
+        <span class="sr-dot" style="background:${resolvedColor(colorOf(e.node))}"></span>
+        <span class="sr-main">
+          <span class="sr-key">${markHtml(e.key, q.trim())}${detail}</span>
+          <span class="sr-path">${escapeHtml(e.pathStr || "virtual service")}</span>
+        </span>
+        <span class="sr-tag">${escapeHtml(tag)}</span>
+      </div>`;
+    })
+    .join("");
+  searchResults.querySelectorAll(".sr-row").forEach((r) => {
+    r.addEventListener("click", () => { searchSel = Number(r.dataset.i); acceptSearch(); });
+  });
+  render();
+}
+
+function moveSearchSel(delta) {
+  if (!searchHits.length) return;
+  searchSel = (searchSel + delta + searchHits.length) % searchHits.length;
+  const rows = searchResults.querySelectorAll(".sr-row");
+  rows.forEach((r, i) => r.classList.toggle("sel", i === searchSel));
+  const sel = rows[searchSel];
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+
+function acceptSearch() {
+  const e = searchHits[searchSel];
+  if (!e) return;
+  const q = searchInput.value.trim();
+  searchOverlay.classList.remove("open");
+  revealNode(e.node, { highlight: q, flashKey: e.isLeaf ? String(e.key) : null });
+}
+
+searchInput.addEventListener("input", updateSearch);
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); moveSearchSel(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); moveSearchSel(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); acceptSearch(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+});
+searchOverlay.addEventListener("pointerdown", (e) => {
+  if (e.target === searchOverlay) closeSearch();
+});
+
+/* ---------------------------------------------------------------------
+   12. Toolbar + keyboard
+--------------------------------------------------------------------- */
+const AUTO_LEVELS = 1; // open each top-level ball one level down
+document.getElementById("btn-search").addEventListener("click", openSearch);
+document.getElementById("btn-depth").addEventListener("click", () => {
+  // Unbounded expand-all buries the view in thousands of balls; one level
+  // below each virtual service is where the structure is still readable.
+  CONTAINERS.forEach((n) => (n.expanded = n.depth < TOP_DEPTH + AUTO_LEVELS));
+  rebuildVisible();
+  fitAll();
+});
+document.getElementById("btn-expand-all").addEventListener("click", () => {
+  // Only containers become balls, so "everything" is a few hundred here, not
+  // the thousands the value count suggests — cheap enough to open in one go.
   CONTAINERS.forEach((n) => (n.expanded = true));
   rebuildVisible();
+  fitAll();
 });
 document.getElementById("btn-collapse").addEventListener("click", () => {
-  CONTAINERS.forEach((n) => (n.expanded = n.kind === "root"));
+  CONTAINERS.forEach((n) => (n.expanded = false));
   rebuildVisible();
+  fitAll();
 });
-document.getElementById("btn-reset").addEventListener("click", () => {
-  targetPanX = window.innerWidth / 2;
-  targetPanY = window.innerHeight / 2;
-  targetScale = 1;
-  basePanX = targetPanX;
-  basePanY = targetPanY;
-  reheat();
+document.getElementById("btn-fit").addEventListener("click", fitAll);
+document.getElementById("btn-focus").addEventListener("click", (e) => {
+  focusMode = !focusMode;
+  e.currentTarget.classList.toggle("active", focusMode);
+  recomputeFocus();
+  render();
 });
 document.getElementById("btn-xrefs").addEventListener("click", (e) => {
   showXrefs = !showXrefs;
@@ -1940,11 +2730,69 @@ document.getElementById("btn-tree").addEventListener("click", (e) => {
   e.currentTarget.classList.toggle("active", showTree);
   render();
 });
+document.getElementById("legend-head").addEventListener("click", () => {
+  document.getElementById("legend").classList.toggle("collapsed");
+});
+
+function siblingStep(node, delta) {
+  if (!node.parent) return null;
+  const sibs = containerChildrenOf(node.parent);
+  const i = sibs.indexOf(node);
+  if (i < 0 || sibs.length < 2) return null;
+  return sibs[(i + delta + sibs.length) % sibs.length];
+}
+
+window.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+  const searchOpen = searchOverlay.classList.contains("open");
+
+  if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault(); openSearch(); return;
+  }
+  if (!typing && e.key === "/") {
+    e.preventDefault(); openSearch(); return;
+  }
+  if (e.key === "Escape") {
+    if (searchOpen) closeSearch();
+    else if (detailEl.classList.contains("open")) closePanel();
+    return;
+  }
+  if (typing || searchOpen) return;
+
+  if (e.key === "f" || e.key === "F") { e.preventDefault(); fitAll(); return; }
+  if (e.key === "x" || e.key === "X") { document.getElementById("btn-xrefs").click(); return; }
+  if (e.key === "d" || e.key === "D") { document.getElementById("btn-focus").click(); return; }
+
+  if (!selectedNode || selectedNode.kind === "external") return;
+  let next = null;
+  if (e.key === "ArrowUp") {
+    const up = selectedNode.parent;
+    next = up && !HIDDEN.has(up.id) ? up : null;
+  }
+  else if (e.key === "ArrowDown") {
+    const kids = containerChildrenOf(selectedNode);
+    if (kids.length) {
+      if (!selectedNode.expanded) { selectedNode.expanded = true; rebuildVisible(); }
+      next = kids[0];
+    }
+  } else if (e.key === "ArrowLeft") next = siblingStep(selectedNode, -1);
+  else if (e.key === "ArrowRight") next = siblingStep(selectedNode, 1);
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    if (selectedNode.expanded) collapseNode(selectedNode);
+    else handleNodeClick(selectedNode);
+    return;
+  } else return;
+
+  if (next) { e.preventDefault(); revealNode(next); }
+});
 
 /* ---------------------------------------------------------------------
-   9. Go
+   13. Go — open the response and its results array so the eight virtual
+   services are on screen from the first frame.
 --------------------------------------------------------------------- */
 rebuildVisible();
+fitAll();
 render();
 </script>
 </body>
