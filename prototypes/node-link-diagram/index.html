@@ -1,0 +1,1951 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Avi API Response — Node Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a0f1a;
+    --bg-alt: #0d1422;
+    --surface: #111a2c;
+    --surface-2: #0e1626;
+    --border: #223252;
+    --border-soft: #182338;
+    --text: #eef2fb;
+    --text-dim: #93a1bb;
+    --text-faint: #56668a;
+    --accent: #5eead4;
+    --accent-dim: #2c7a6d;
+    --accent-soft: rgba(94, 234, 212, 0.12);
+    --link-line: rgba(139, 154, 184, 0.28);
+    --xref-line: #fb923c;
+    --xref-line-weak: #94a3b8;
+
+    --n-root: #f8fafc;
+    --n-vs: #60a5fa;
+    --n-object: #a78bfa;
+    --n-array: #fb7185;
+    --n-string: #2dd4bf;
+    --n-number: #fbbf24;
+    --n-boolean: #38bdf8;
+    --n-null: #64748b;
+
+    --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.001ms !important; }
+  }
+
+  canvas#graph {
+    position: fixed;
+    inset: 0;
+    display: block;
+    background: var(--bg);
+    touch-action: none;
+    cursor: grab;
+  }
+  canvas#graph.grabbing { cursor: grabbing; }
+  canvas#graph.hovering { cursor: pointer; }
+
+  #topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 20px;
+    background: linear-gradient(to bottom, rgba(10,15,26,0.92), rgba(10,15,26,0.7) 80%, transparent);
+    pointer-events: none;
+  }
+  #topbar > * { pointer-events: auto; }
+
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+  .brand h1 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+  }
+  .brand .sub {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-faint);
+    letter-spacing: 0.02em;
+  }
+  .brand .sub span { color: var(--accent); }
+
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toolbar button {
+    font-family: var(--font-ui);
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  }
+  .toolbar button:hover {
+    color: var(--text);
+    border-color: var(--accent-dim);
+    background: var(--surface-2);
+  }
+  .toolbar button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .toolbar button.active {
+    color: var(--xref-line);
+    border-color: var(--xref-line);
+    background: rgba(251, 146, 60, 0.1);
+  }
+
+  #legend {
+    position: fixed;
+    left: 20px;
+    bottom: 20px;
+    z-index: 10;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 168px;
+  }
+  #legend .legend-title {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin-bottom: 2px;
+  }
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .legend-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .legend-line {
+    width: 16px;
+    height: 0;
+    border-top: 2px dashed var(--xref-line);
+    flex: none;
+  }
+  .legend-line.weak {
+    border-top-color: var(--xref-line-weak);
+    border-top-style: dotted;
+  }
+  .legend-sep {
+    height: 1px;
+    background: var(--border-soft);
+    margin: 2px 0;
+  }
+
+  #hint {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 10;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    text-align: right;
+    line-height: 1.6;
+  }
+  #hint kbd {
+    font-family: var(--font-mono);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 5px;
+    color: var(--text-dim);
+  }
+
+  #detail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 380px;
+    max-width: 88vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 20;
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    box-shadow: -24px 0 48px rgba(0,0,0,0.35);
+  }
+  #detail.open { transform: translateX(0); }
+
+  #detail .detail-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  #detail .detail-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+  #detail .type-dot { width: 8px; height: 8px; border-radius: 50%; }
+  #detail .detail-key {
+    font-size: 17px;
+    font-weight: 600;
+    word-break: break-word;
+    line-height: 1.3;
+  }
+  #detail-close {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #detail-close:hover { color: var(--text); border-color: var(--accent-dim); }
+
+  #detail .detail-body {
+    padding: 16px 18px 24px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .field-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-faint);
+    margin-bottom: 6px;
+  }
+
+  #detail-path {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.7;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  #detail-path .seg { color: var(--text-dim); }
+  #detail-path .sep { color: var(--text-faint); margin: 0 4px; }
+  #detail-path .seg:last-child { color: var(--accent); }
+
+  .fields-list {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-soft);
+    border-radius: 8px;
+    background: var(--surface-2);
+    overflow: hidden;
+  }
+  .field-row { padding: 10px 14px; border-bottom: 1px solid var(--border-soft); }
+  .field-row:last-child { border-bottom: none; }
+  .field-row-head {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 4px;
+  }
+  .field-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .field-key {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--text-dim);
+  }
+  .field-value {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--text);
+    word-break: break-word;
+    padding-left: 14px;
+  }
+  .field-value.is-empty { color: var(--text-faint); font-style: italic; }
+  .fields-empty {
+    padding: 14px;
+    font-size: 12.5px;
+    color: var(--text-faint);
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  #detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  #detail-meta div { display: flex; flex-direction: column; gap: 3px; }
+  #detail-meta .v { font-family: var(--font-mono); color: var(--text); }
+
+  #stage-label {
+    position: fixed;
+    left: 50%;
+    top: 16px;
+    transform: translateX(-50%);
+    z-index: 10;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 5px 12px;
+    display: none;
+    pointer-events: none;
+  }
+
+  @media (max-width: 720px) {
+    #legend { display: none; }
+    #hint { display: none; }
+    .brand .sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="graph"></canvas>
+
+<div id="topbar">
+  <div class="brand">
+    <h1>Avi API Response — Node Graph</h1>
+    <div class="sub"><span id="stat-visible">0</span> nodes on screen · <span id="stat-leaves">0</span> values total</div>
+  </div>
+  <div class="toolbar">
+    <button id="btn-expand">Expand all</button>
+    <button id="btn-collapse">Collapse all</button>
+    <button id="btn-reset">Reset view</button>
+    <button id="btn-xrefs" class="active">Cross-refs</button>
+    <button id="btn-tree" class="active">Structure</button>
+  </div>
+</div>
+
+<div id="stage-label"></div>
+
+<div id="legend">
+  <div class="legend-title">Ball types</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-root)"></span>Response root</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-vs)"></span>Virtual service</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-object)"></span>Object</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-array)"></span>Array</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--xref-line-weak)"></span>External object</div>
+  <div class="legend-sep"></div>
+  <div class="legend-title">Field colors (in panel)</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-string)"></span>String value</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-number)"></span>Number value</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-boolean)"></span>Boolean value</div>
+  <div class="legend-row"><span class="legend-dot" style="background:var(--n-null)"></span>Null / empty</div>
+  <div class="legend-sep"></div>
+  <div class="legend-title">Cross-reference</div>
+  <div class="legend-row"><span class="legend-line"></span>Ref target listed in JSON</div>
+  <div class="legend-row"><span class="legend-line weak"></span>Shared ref, target not in JSON</div>
+</div>
+
+<div id="hint">
+  click a ball to expand it & view its fields<br />
+  drag to move · scroll to zoom
+</div>
+
+<div id="detail">
+  <div class="detail-head">
+    <div>
+      <div class="detail-type"><span class="type-dot" id="detail-type-dot"></span><span id="detail-type-text"></span></div>
+      <div class="detail-key" id="detail-key"></div>
+    </div>
+    <button id="detail-close" aria-label="Close">✕</button>
+  </div>
+  <div class="detail-body">
+    <div>
+      <div class="field-label">Path</div>
+      <div id="detail-path"></div>
+    </div>
+    <div>
+      <div class="field-label">Fields</div>
+      <div id="detail-fields" class="fields-list"></div>
+    </div>
+    <div id="detail-meta"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ---------------------------------------------------------------------
+   1. Data — verbatim contents of api_answer_model.json
+--------------------------------------------------------------------- */
+const DATA = {
+  "count": 8,
+  "results": [
+    {
+      "_last_modified": "1783547226956301",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-fa53624c-7227-4b71-8ed9-93b063af9d3c", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "parent1",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-c5899a79-6374-45d8-8f13-03ddd70969d6",
+      "redis_db": 8,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 443, "port_range_end": 443 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_key_and_certificate_refs": [
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-7f530ed8-f5d6-4f2a-b30a-6bbf4e19fd0c",
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-1655d5c2-ba2a-48da-a42d-05590e326031"
+      ],
+      "ssl_profile_ref": "https://35.164.151.144/api/sslprofile/sslprofile-f1fdf9d2-026f-4bad-af0a-6e7035b02ae3",
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "bG2fRRr0VjTd1Q6nUAhwOA==", "hmac_key": "WIQEjCnNmhbTuud4prfgog==", "name": "f2539fef-0bb9-4623-8a86-aab493d16ff1" },
+        { "aes_key": "W9Zhf76YDLkpG6vnpjW9zQ==", "hmac_key": "w0jzfpn9lx/va9wo3u0sdA==", "name": "fa2fb172-4647-486b-b657-9c91592a9d95" },
+        { "aes_key": "DYM+oAZ2aLYER1vrTq0DWQ==", "hmac_key": "qMSaRkWNTmZlYjVVZtKDZA==", "name": "d1c381ba-c7d8-4252-957a-f1fc6e13a202" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_PARENT",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "version": 8773,
+      "vh_child_vs_uuid": [
+        "virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+        "virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+        "virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+        "virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6"
+      ],
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 860353 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-a75ec8a0-31ff-45ec-b902-b504d1392094",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547226985751",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": false,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-1f9f1974-3cd7-40bd-964a-556d48e7d561",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "dns_policies": [
+        { "dns_policy_ref": "https://35.164.151.144/api/dnspolicy/dnspolicy-a57264dd-474b-4f7c-97f3-6c28f34efb1b", "index": 11 }
+      ],
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "ns1.aws.avilab.eu",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-d1a55339-a939-4783-ae11-3528242aa0d2",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-1f4258da-a941-4381-9e20-748b94e34604",
+      "redis_db": 11,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 53, "port_range_end": 53 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "override_network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5", "port": 53, "port_range_end": 53 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "SicgpXKZJ0FQC1MQVZwjCA==", "hmac_key": "NV7eJHkOL63ocxO6eSk7Vg==", "name": "2060786f-4de1-474c-9a3e-ae9dd7d429dd" },
+        { "aes_key": "iqzsdHHUGvQi6d4BeYCkqg==", "hmac_key": "SJRKBrgYl+7DSFcpSy84uA==", "name": "96637938-d2ab-49d1-8c58-feff50cd8597" },
+        { "aes_key": "z+NvpRy7qIFdYB2ds2RsKg==", "hmac_key": "IvZ0SQgpVV9ETQTyDbK5lw==", "name": "11e57bb0-3a14-4203-abf2-1de96184fb3c" }
+      ],
+      "topology_policies": [
+        { "dns_policy_ref": "https://35.164.151.144/api/dnspolicy/dnspolicy-473d1e63-83a3-4752-a358-3333ff041961", "index": 11 }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-285e0db0-541e-440a-aebc-3bb4158e33ad",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-285e0db0-541e-440a-aebc-3bb4158e33ad",
+      "version": 12714,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 68247 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" },
+        { "first_se_assigned_time": { "secs": 1773713731, "usecs": 266649 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "2" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-5273a41a-6a5d-4d4c-9ddf-c7a1add8cea1",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227015044",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 0 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 0,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-33fda8b2-9057-432b-aa33-521c39f5d8b3",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-0c67bdb4-0ba4-422b-8a35-ee91e4ac78e0",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-7c1b9433-bdf8-479a-acfe-4919fa399037", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "vs-sb2",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-ac42aee0-43a3-41e2-bb3e-9db2ccb1dd3e",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-36d0c525-82aa-4532-89c9-12b564bf0bbf",
+      "redis_db": 2,
+      "redis_port": 5028,
+      "remove_listening_port_on_vs_down": false,
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 8025, "port_range_end": 8025 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 5002, "port_range_end": 5002 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "I18IF50Sr5OTO8uU0KIgaQ==", "hmac_key": "eYWZQu7oPYboenEe/eKKyg==", "name": "f62a87ad-177c-4e0b-adc3-af8290bfe853" },
+        { "aes_key": "EvnhcCn+BRFoPTTKKjr/qg==", "hmac_key": "l3cQSvhIUPWQTwX+0trcRg==", "name": "ac270ecd-9818-4469-ac64-eb9a42449aa3" },
+        { "aes_key": "RXo6yPdYpNq92yRARed/Dw==", "hmac_key": "hB3KIVIb61B1+aiL1bgXyw==", "name": "bc3371e1-7e76-4178-b07e-08e7c41fc9e3" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-a455d34c-64df-4de0-a20d-adfd28ae68a6",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-a455d34c-64df-4de0-a20d-adfd28ae68a6",
+      "version": 5559,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 70320 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vs_datascripts": [
+        { "index": 1, "vs_datascript_set_ref": "https://35.164.151.144/api/vsdatascriptset/vsdatascriptset-47932346-cd0b-450c-b2a0-f5bf9b45e9b3" }
+      ],
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-8e9538c4-26c1-475c-806f-76ba2d078edb",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227047680",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-0c67bdb4-0ba4-422b-8a35-ee91e4ac78e0",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "csrf_policy_ref": "https://35.164.151.144/api/csrfpolicy/csrfpolicy-1c375680-6e3e-40c2-838b-723ec8c018d7",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": true,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-4452bdd8-0d4c-4f48-a0bd-41c6bf47f024", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "werpusUS",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-f0d224c7-21e5-474d-b46b-6cd98b48ec2e",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-aea61cb5-1020-4c00-8d6d-9dac0bf6fa05",
+      "redis_db": 4,
+      "redis_port": 5022,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 },
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "override_application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-8a64542d-3478-422a-9a35-820456053652", "override_network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f38effbe-2406-43ce-91fc-e435712af5c1", "port": 8080, "port_range_end": 8080 },
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 443, "port_range_end": 443 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 777, "port_range_end": 777 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_key_and_certificate_refs": [
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-1655d5c2-ba2a-48da-a42d-05590e326031"
+      ],
+      "ssl_profile_ref": "https://35.164.151.144/api/sslprofile/sslprofile-f1fdf9d2-026f-4bad-af0a-6e7035b02ae3",
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "ZCamrgftkRRY50kHAJ4bpg==", "hmac_key": "Rw18DgIYn6y4hWjbmuCopg==", "name": "1aa7d331-1dc4-43bb-b0dc-47f38eb92d1f" },
+        { "aes_key": "28wDPs8lxgJUK9W6DU4W4Q==", "hmac_key": "J46rKnqtCq6fJob7Wm987w==", "name": "750edf28-4a09-482d-9d6a-ebe4be6d5ad1" },
+        { "aes_key": "Of5BYVpkfpFtqx3GKG6+Fw==", "hmac_key": "/IoCLtb84N5k4BQkOlsqqQ==", "name": "db40ae44-ef66-42b6-b087-35e96fbbcc67" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-bbe1fe34-e388-4883-8fb8-269288e9c103",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-bbe1fe34-e388-4883-8fb8-269288e9c103",
+      "version": 7472,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 114344 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-2649b5f1-fc02-494e-8c6b-1c17130df2f1",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227076154",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": false,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": false, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": false },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-86fe739a-5386-460d-a2a9-f27c247a9106", "index": 11 }
+      ],
+      "ign_pool_net_reach": true,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "VS-Demo-2",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-55d53b34-f4cf-48fd-a6f2-03068e3125e8",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-d118470b-fb01-467e-8a89-b54c1fc35d94",
+      "redis_db": 14,
+      "redis_port": 5023,
+      "remove_listening_port_on_vs_down": false,
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "VNINEEBDJvUykcMmzDDuzw==", "hmac_key": "ngrbwuk/nvAWSHP2HnHEBg==", "name": "014e19ac-0fd9-4eec-a57f-48520eba8bb5" },
+        { "aes_key": "TxsFFBH+bfZOG3BHSGB3Ig==", "hmac_key": "IR3xLfi95N5eOXbGXPdkAQ==", "name": "2c4801f8-4fb9-4d0b-8c8a-295421a975b0" },
+        { "aes_key": "KIK/HC3ANxMbsoJaWowa1w==", "hmac_key": "yBbEquohDjw3o9RuTLtSjg==", "name": "5377a96a-deca-4fae-99e8-d5ec70ae4b84" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6",
+      "version": 8101,
+      "vh_matches": [
+        { "host": "Host1", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "string_group_refs": [ "https://35.164.151.144/api/stringgroup/stringgroup-0655673a-e00a-4c52-a87c-8d3fc2562429" ] } }, "name": "Rule 1" } ] },
+        { "host": "Host 2", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "string_group_refs": [ "https://35.164.151.144/api/stringgroup/stringgroup-b74ebe9f-c687-430a-9304-8b5f0d7b4e2a" ] } }, "name": "Rule 2" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 928197 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227103596",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-3464c119-ed18-44aa-a9a6-1d70a5d2220b", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "store",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-fcde1e39-2039-4ee3-857a-59f51e35bcca",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 10,
+      "redis_port": 5027,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "2ALihie+9AWqvYCBe5PS/Q==", "hmac_key": "U0S8qyn9AfZo5O0KShI7qQ==", "name": "f5188995-fa20-4da1-aec7-09fa2ad8d9a3" },
+        { "aes_key": "BOCkyZE+xeLDGwfWuLWnoQ==", "hmac_key": "xrvisSvZ6QhY7ySwnaoHaA==", "name": "a42d1d72-6ae2-4874-ae2c-c2c328053191" },
+        { "aes_key": "wHBQEBkJ4Fy0oAS55oeIxQ==", "hmac_key": "FfJ/SdpdrOLUyzxxrEtr+A==", "name": "f71f5f8b-3acb-4e11-9834-d4227ef23d79" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+      "version": 8781,
+      "vh_matches": [
+        { "host": "store.aws.avilab.top", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 896352 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227131117",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-93d7cc92-e28b-4556-88f1-4a413756048c", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "yesserv",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-b4415803-32b6-46ec-bcea-1ab14f2d9429",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 1,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "6s/HzcBBcmhamDxB3K9pFg==", "hmac_key": "ME6YhwwMoq4yZsMY24Zi8A==", "name": "1d6e7c4f-914b-4d38-b85b-a873d57a09c4" },
+        { "aes_key": "NTmGxkfHYJLyzd+ndWiJGg==", "hmac_key": "eTBdZq4j741Z2jpePpyYlA==", "name": "e6ea0f1a-6cc0-4625-9693-2e29ae581a63" },
+        { "aes_key": "ivtZ02jVidIPuotkwkl6wQ==", "hmac_key": "1QKv9m5+Gy6+YdD5J4+huw==", "name": "d504fa9f-aab1-4a71-bbbd-7cd3e332017f" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+      "version": 8783,
+      "vh_matches": [
+        { "host": "yesserv.aws.avilab.eu", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] },
+        { "host": "app.gslb.avilab.eu", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 891835 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227157846",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-fac82667-bb00-4b72-888d-f18302f2fb1b",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-5ae80824-93d4-4d06-af45-9919518fc5cb", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "saml",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-a67e3857-beea-4eba-bd12-898ef2f89e93",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 5,
+      "redis_port": 5028,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "saml_sp_config": {
+        "acs_index": 0,
+        "authn_req_acs_type": "SAML_AUTHN_REQ_ACS_TYPE_NONE",
+        "cookie_name": "COOKSAML",
+        "cookie_timeout": 60,
+        "entity_id": "avi-saml-aws-avilab",
+        "key": [ { "aes_key": "Cz+3giqDIoiSel3iGfpIt93QhGPAVhC+rU36GGW/J/I=", "name": "a400267e-037b-4806-9128-dfd37a12a54a" } ],
+        "single_signon_url": "https://saml.aws.avilab.top/sso/acs/",
+        "sp_metadata": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2026-07-10T06:56:46.576Z\" entityID=\"avi-saml-aws-avilab\" ID=\"avi-saml-aws-avilab\">\n  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n    <NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified</NameIDFormat>\n    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://saml.aws.avilab.top/sso/acs/\" index=\"1\"/>\n  </SPSSODescriptor>\n</EntityDescriptor>"
+      },
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "sso_policy_ref": "https://35.164.151.144/api/ssopolicy/ssopolicy-71907bac-0164-4552-b8b0-a215578cca54",
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "/T6pYkO3BkhU0+lzIrAxrw==", "hmac_key": "KpMnWci+0t81Blxrkuvz6g==", "name": "6b6e2d64-7971-433b-8cf9-f81c8fe297e2" },
+        { "aes_key": "jx9hJnovexzFRrbt6A1xiA==", "hmac_key": "X43/GRbdPAK+YK7gJXQQvg==", "name": "99a221e6-fe8f-47d5-8e48-b350c3e17640" },
+        { "aes_key": "YHXEmUIoaKx4RvCQeTmzCw==", "hmac_key": "oyv+EXfRjj1WBH1GILD/TA==", "name": "2093945f-d138-48ee-9acd-c5fa227c1436" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+      "version": 8706,
+      "vh_matches": [
+        { "host": "saml.aws.avilab.top", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 896399 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "weight": 1
+    }
+  ]
+};
+
+/* ---------------------------------------------------------------------
+   2. Build a node tree from the JSON
+--------------------------------------------------------------------- */
+let nextId = 0;
+function leafType(v) {
+  if (v === null) return "null";
+  if (typeof v === "boolean") return "boolean";
+  if (typeof v === "number") return "number";
+  return "string";
+}
+
+function buildNode(label, value, parent, depth, parentPath) {
+  const path = parentPath.concat(label);
+  const node = {
+    id: nextId++,
+    key: label,
+    parent,
+    depth,
+    path,
+    children: [],
+    expanded: depth === 0,
+  };
+
+  if (value === null || typeof value !== "object") {
+    node.kind = "leaf";
+    node.value = value;
+    node.leafType = leafType(value);
+    node.leafCount = 1;
+    return node;
+  }
+
+  const isArray = Array.isArray(value);
+  node.kind = isArray ? "array" : "object";
+  if (depth === 0) node.kind = "root";
+  else if (parent && parent.key === "results" && parent.kind === "array" && !isArray) node.kind = "vs";
+
+  if (isArray) {
+    node.childLabel = `${value.length} item${value.length === 1 ? "" : "s"}`;
+    value.forEach((item, i) => {
+      const label2 =
+        item && typeof item === "object" && !Array.isArray(item) && (item.name || item.host)
+          ? item.name || item.host
+          : `#${i + 1}`;
+      node.children.push(buildNode(label2, item, node, depth + 1, path));
+    });
+  } else {
+    const keys = Object.keys(value);
+    node.childLabel = `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+    keys.forEach((k) => node.children.push(buildNode(k, value[k], node, depth + 1, path)));
+  }
+
+  node.leafCount = node.children.reduce((s, c) => s + c.leafCount, 0);
+  return node;
+}
+
+const root = buildNode("API Response", DATA, null, 0, []);
+const TOTAL_LEAVES = root.leafCount;
+
+function allContainers(node, out) {
+  if (node.kind !== "leaf") {
+    out.push(node);
+    node.children.forEach((c) => allContainers(c, out));
+  }
+  return out;
+}
+const CONTAINERS = allContainers(root, []);
+
+/* ---------------------------------------------------------------------
+   2b. Cross-references — links between different balls whose fields
+   embed the same UUID (shared refs, parent/child VS links, etc.)
+
+   Resolved: the UUID matches an object's own "uuid" field elsewhere in
+   this JSON — a real link to a listed object, drawn straight to it.
+   Unresolved: the UUID doesn't match any listed object's own identity —
+   it points at something outside this dataset (a pool/SE-group/profile/
+   VIP/etc. not included here). EVERY such reference gets its own
+   dedicated "external object" ball, even one referenced by a single
+   ball — nothing is skipped just because it isn't shared.
+
+   Only values shaped like "<type>-<uuid>" (bare, or inside a
+   ".../api/<type>/<type>-<uuid>" URL) are treated as references — this
+   excludes incidental UUID-shaped strings that aren't refs at all, like
+   generated TLS ticket key names or SAML key names, which are bare
+   UUIDs with no type prefix.
+--------------------------------------------------------------------- */
+const REF_RE = /([a-zA-Z][a-zA-Z0-9]*)-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/g;
+
+function ownerOf(node) {
+  let n = node;
+  while (n && n.kind !== "vs" && n.kind !== "root") n = n.parent;
+  return n || root;
+}
+
+function isOwnUuidLeaf(ownerNode, uuid) {
+  return ownerNode.children.some(
+    (c) => c.kind === "leaf" && c.key === "uuid" && typeof c.value === "string" && c.value.includes(uuid)
+  );
+}
+
+const EXTERNAL_NODES = [];
+const EXTERNAL_LINKS = []; // { owner, ext }
+
+const RESOLVED_PAIRS = (function build() {
+  const uuidInfo = new Map(); // uuid -> Map(owner node -> type prefix)
+  (function walk(node) {
+    if (node.kind === "leaf" && typeof node.value === "string") {
+      const owner = ownerOf(node);
+      for (const m of node.value.matchAll(REF_RE)) {
+        const [, prefix, uuid] = m;
+        if (!uuidInfo.has(uuid)) uuidInfo.set(uuid, new Map());
+        if (!uuidInfo.get(uuid).has(owner)) uuidInfo.get(uuid).set(owner, prefix);
+      }
+    }
+    node.children.forEach(walk);
+  })(root);
+
+  const pairs = new Map(); // "idA|idB" -> { a, b, count }
+  let extCounter = 0;
+  for (const [uuid, ownerMap] of uuidInfo) {
+    const owners = Array.from(ownerMap.keys());
+    const hub = owners.find((o) => isOwnUuidLeaf(o, uuid));
+    if (hub) {
+      owners.forEach((o) => {
+        if (o === hub) return;
+        const key = hub.id < o.id ? `${hub.id}|${o.id}` : `${o.id}|${hub.id}`;
+        const existing = pairs.get(key);
+        if (existing) existing.count++;
+        else pairs.set(key, { a: hub, b: o, count: 1 });
+      });
+    } else {
+      const extNode = {
+        id: `ext-${extCounter++}`,
+        kind: "external",
+        key: ownerMap.get(owners[0]),
+        uuid,
+        owners,
+        children: [],
+        expanded: false,
+        leafCount: 0,
+      };
+      EXTERNAL_NODES.push(extNode);
+      owners.forEach((o) => EXTERNAL_LINKS.push({ owner: o, ext: extNode }));
+    }
+  }
+  return Array.from(pairs.values());
+})();
+
+/* ---------------------------------------------------------------------
+   3. Visible set + simulation
+--------------------------------------------------------------------- */
+const sim = new Map(); // id -> {x,y,vx,vy,fx,fy,fixed}
+let visibleNodes = [];
+let visibleLinks = [];
+let visibleIdSet = new Set();
+let showXrefs = true;
+let showTree = true;
+
+function radiusOf(node) {
+  if (node.kind === "root") return 24;
+  if (node.kind === "vs") return 17;
+  if (node.kind === "external") return 9 + Math.min(9, node.owners.length * 1.2);
+  if (node.kind === "leaf") return 6.5;
+  const bump = Math.min(14, Math.sqrt(node.leafCount) * 1.5);
+  return 10 + bump;
+}
+
+function colorOf(node) {
+  switch (node.kind) {
+    case "root": return "var(--n-root)";
+    case "vs": return "var(--n-vs)";
+    case "object": return "var(--n-object)";
+    case "array": return "var(--n-array)";
+    case "external": return "var(--xref-line-weak)";
+    case "leaf":
+      if (node.leafType === "string") return "var(--n-string)";
+      if (node.leafType === "number") return "var(--n-number)";
+      if (node.leafType === "boolean") return "var(--n-boolean)";
+      return "var(--n-null)";
+  }
+}
+const resolvedColor = (() => {
+  const cache = {};
+  return (varExpr) => {
+    if (cache[varExpr]) return cache[varExpr];
+    const probe = document.createElement("span");
+    probe.style.color = varExpr;
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    cache[varExpr] = c;
+    return c;
+  };
+})();
+
+function ringRadius(depth) {
+  let r = 0, inc = 100;
+  for (let d = 1; d <= depth; d++) { r += inc; inc += 24; }
+  return r;
+}
+
+const LONE_CHILD_GAP = 50;
+
+function computeRadialLayout() {
+  (function place(node, a0, a1, depth, forcedR) {
+    const angle = (a0 + a1) / 2;
+    const r = forcedR != null ? forcedR : ringRadius(depth);
+    node.targetX = r * Math.cos(angle);
+    node.targetY = r * Math.sin(angle);
+    const containerChildren = node.children.filter((c) => c.kind !== "leaf");
+    if (node.expanded && containerChildren.length) {
+      const weights = containerChildren.map((c) => Math.sqrt(Math.max(1, c.leafCount)));
+      const total = weights.reduce((s, w) => s + w, 0);
+      const onlyChild = containerChildren.length === 1;
+      let a = a0;
+      containerChildren.forEach((c, i) => {
+        const span = (a1 - a0) * (weights[i] / total);
+        const childR = onlyChild ? r + LONE_CHILD_GAP : ringRadius(depth + 1);
+        place(c, a, a + span, depth + 1, childR);
+        a += span;
+      });
+    }
+  })(root, 0, Math.PI * 2, 0, 0);
+}
+
+function externalCentroid(node) {
+  let sx = 0, sy = 0, n = 0;
+  node.owners.forEach((o) => {
+    if (!visibleIdSet.has(o.id)) return;
+    const op = sim.get(o.id);
+    if (op) { sx += op.x; sy += op.y; n++; }
+  });
+  if (n === 0) return { x: 0, y: 0 };
+  // externals that share nearly the same owner set land on the same
+  // centroid — fan them out a little (golden-angle, stable per node) so
+  // they don't stack exactly on top of one another.
+  const idx = EXTERNAL_NODES.indexOf(node);
+  const angle = idx * 2.399963;
+  const fan = 34;
+  return { x: sx / n + Math.cos(angle) * fan, y: sy / n + Math.sin(angle) * fan };
+}
+
+function updateExternalTargets() {
+  for (const node of visibleNodes) {
+    if (node.kind !== "external") continue;
+    const c = externalCentroid(node);
+    node.targetX = c.x;
+    node.targetY = c.y;
+  }
+}
+
+function rebuildVisible() {
+  visibleNodes = [];
+  visibleLinks = [];
+  (function walk(node) {
+    visibleNodes.push(node);
+    if (node.expanded) {
+      node.children.forEach((c) => {
+        if (c.kind === "leaf") return;
+        visibleLinks.push({ source: node, target: c });
+        walk(c);
+      });
+    }
+  })(root);
+
+  const treeIdSet = new Set(visibleNodes.map((n) => n.id));
+  if (showXrefs) {
+    EXTERNAL_NODES.forEach((ext) => {
+      if (ext.owners.some((o) => treeIdSet.has(o.id))) visibleNodes.push(ext);
+    });
+  }
+
+  visibleIdSet = new Set(visibleNodes.map((n) => n.id));
+  for (const id of Array.from(sim.keys())) {
+    if (!visibleIdSet.has(id)) sim.delete(id);
+  }
+  for (const node of visibleNodes) {
+    if (!sim.has(node.id)) {
+      if (node.kind === "external") {
+        const c = externalCentroid(node);
+        sim.set(node.id, { x: c.x, y: c.y, dragging: false });
+      } else {
+        const p = node.parent && sim.get(node.parent.id);
+        sim.set(node.id, { x: p ? p.x : 0, y: p ? p.y : 0, dragging: false });
+      }
+    }
+  }
+
+  computeRadialLayout();
+  updateExternalTargets();
+
+  document.getElementById("stat-visible").textContent = visibleNodes.length;
+  document.getElementById("stat-leaves").textContent = TOTAL_LEAVES;
+  reheat();
+}
+
+/* ---------------------------------------------------------------------
+   4. Layout settling — nodes ease slowly toward a radial, tree-shaped
+   resting position (children ringed evenly around their parent).
+--------------------------------------------------------------------- */
+const EASE = 0.09;
+const SETTLE_THRESHOLD = 0.35;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let simRunning = false;
+
+function reheat() {
+  if (reducedMotion) {
+    updateExternalTargets();
+    for (const node of visibleNodes) {
+      const p = sim.get(node.id);
+      if (!p.dragging) { p.x = node.targetX; p.y = node.targetY; }
+    }
+    panX = targetPanX;
+    panY = targetPanY;
+    scale = targetScale;
+    render();
+    return;
+  }
+  if (!simRunning) {
+    simRunning = true;
+    requestAnimationFrame(loop);
+  }
+}
+
+function tick() {
+  updateExternalTargets();
+  let maxDelta = 0;
+  for (const node of visibleNodes) {
+    const p = sim.get(node.id);
+    if (p.dragging) continue;
+    const dx = node.targetX - p.x;
+    const dy = node.targetY - p.y;
+    p.x += dx * EASE;
+    p.y += dy * EASE;
+    maxDelta = Math.max(maxDelta, Math.abs(dx), Math.abs(dy));
+  }
+
+  const dpx = targetPanX - panX;
+  const dpy = targetPanY - panY;
+  const dsc = targetScale - scale;
+  panX += dpx * CAMERA_EASE;
+  panY += dpy * CAMERA_EASE;
+  scale += dsc * CAMERA_EASE;
+  const cameraUnsettled = Math.abs(dpx) > 0.3 || Math.abs(dpy) > 0.3 || Math.abs(dsc) > 0.0015;
+
+  return Math.max(maxDelta, cameraUnsettled ? SETTLE_THRESHOLD + 1 : 0);
+}
+
+function loop() {
+  const maxDelta = tick();
+  render();
+  if (maxDelta > SETTLE_THRESHOLD) {
+    requestAnimationFrame(loop);
+  } else {
+    simRunning = false;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   5. Canvas / view transform
+--------------------------------------------------------------------- */
+const canvas = document.getElementById("graph");
+const ctx = canvas.getContext("2d");
+let dpr = window.devicePixelRatio || 1;
+let panX = window.innerWidth / 2;
+let panY = window.innerHeight / 2;
+let scale = 1;
+let targetPanX = panX, targetPanY = panY, targetScale = scale;
+let basePanX = panX, basePanY = panY;
+const CAMERA_EASE = 0.1;
+const FOLLOW_ENABLED = false;
+const FOLLOW_STRENGTH = 1.4;
+const MAX_FOLLOW = 400;
+
+function worldToScreen(x, y) { return { x: x * scale + panX, y: y * scale + panY }; }
+function screenToWorld(x, y) { return { x: (x - panX) / scale, y: (y - panY) / scale }; }
+
+function resizeCanvas() {
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+function truncateLabel(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars - 1) + "…";
+}
+
+function render() {
+  const w = window.innerWidth, h = window.innerHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  // subtle dot grid, gives a topology-map feel
+  const gridStep = 42 * Math.min(1.4, Math.max(0.5, scale));
+  ctx.fillStyle = "rgba(255,255,255,0.035)";
+  const offX = panX % gridStep;
+  const offY = panY % gridStep;
+  for (let x = offX; x < w; x += gridStep) {
+    for (let y = offY; y < h; y += gridStep) {
+      ctx.fillRect(x - 0.5, y - 0.5, 1, 1);
+    }
+  }
+
+  // links — the JSON parent/child structure
+  if (showTree) {
+    ctx.strokeStyle = resolvedColor("var(--link-line)");
+    ctx.lineWidth = Math.max(1, scale);
+    ctx.beginPath();
+    for (const l of visibleLinks) {
+      const a = sim.get(l.source.id);
+      const b = sim.get(l.target.id);
+      const sa = worldToScreen(a.x, a.y);
+      const sb = worldToScreen(b.x, b.y);
+      ctx.moveTo(sa.x, sa.y);
+      ctx.lineTo(sb.x, sb.y);
+    }
+    ctx.stroke();
+  }
+
+  // cross-reference links — same UUID appearing under two different balls.
+  // Resolved (orange, denser dash) = a direct link to another object's own
+  // identity, listed in this JSON. Unresolved (grey, sparse dots) = a
+  // spoke out to a dedicated ball standing in for an object that shares
+  // this reference but isn't itself listed in this JSON.
+  if (showXrefs) {
+    const resolvedColorStr = resolvedColor("var(--xref-line)");
+    const weakColorStr = resolvedColor("var(--xref-line-weak)");
+
+    ctx.strokeStyle = resolvedColorStr;
+    ctx.globalAlpha = 0.7;
+    ctx.setLineDash([7, 4]);
+    for (const xr of RESOLVED_PAIRS) {
+      if (!visibleIdSet.has(xr.a.id) || !visibleIdSet.has(xr.b.id)) continue;
+      const a = sim.get(xr.a.id);
+      const b = sim.get(xr.b.id);
+      const sa = worldToScreen(a.x, a.y);
+      const sb = worldToScreen(b.x, b.y);
+      const dx = sb.x - sa.x, dy = sb.y - sa.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const bow = Math.max(16, Math.min(60, dist * 0.14));
+      const mx = (sa.x + sb.x) / 2 - (dy / dist) * bow;
+      const my = (sa.y + sb.y) / 2 + (dx / dist) * bow;
+      ctx.lineWidth = Math.min(4, Math.max(1.1, scale) + (xr.count - 1) * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(sa.x, sa.y);
+      ctx.quadraticCurveTo(mx, my, sb.x, sb.y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = weakColorStr;
+    ctx.globalAlpha = 0.45;
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = Math.max(1, scale * 0.9);
+    ctx.beginPath();
+    for (const link of EXTERNAL_LINKS) {
+      if (!visibleIdSet.has(link.owner.id) || !visibleIdSet.has(link.ext.id)) continue;
+      const a = sim.get(link.owner.id);
+      const b = sim.get(link.ext.id);
+      const sa = worldToScreen(a.x, a.y);
+      const sb = worldToScreen(b.x, b.y);
+      ctx.moveTo(sa.x, sa.y);
+      ctx.lineTo(sb.x, sb.y);
+    }
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+  }
+
+  // nodes
+  const fontSize = Math.max(9, Math.min(13, 11 * scale));
+  ctx.font = `500 ${fontSize}px "IBM Plex Mono", monospace`;
+  ctx.textBaseline = "middle";
+
+  for (const node of visibleNodes) {
+    const p = sim.get(node.id);
+    const s = worldToScreen(p.x, p.y);
+    const r = radiusOf(node) * Math.max(0.55, Math.min(1.6, scale));
+    const isHover = node === hoveredNode;
+    const isSelected = node === selectedNode;
+
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = resolvedColor(colorOf(node));
+    ctx.fill();
+
+    ctx.lineWidth = node.expanded ? 0 : 2;
+    ctx.strokeStyle = resolvedColor("var(--bg)");
+    if (!node.expanded) ctx.stroke();
+
+    if (isHover || isSelected) {
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = resolvedColor("var(--accent)");
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // collapsed-container child count badge (only counts children that become balls)
+    const containerChildCount = node.children.reduce((n, c) => n + (c.kind !== "leaf" ? 1 : 0), 0);
+    if (!node.expanded && containerChildCount > 0 && r > 5) {
+      ctx.fillStyle = resolvedColor("var(--bg)");
+      ctx.font = `600 ${Math.max(8, fontSize - 2)}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = "center";
+      ctx.fillText(String(containerChildCount), s.x, s.y + 0.5);
+      ctx.font = `500 ${fontSize}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = "left";
+    }
+
+    // label
+    if (r > 2.5) {
+      const label = truncateLabel(String(node.key), 26);
+      ctx.fillStyle = resolvedColor(node.kind === "root" || node.kind === "vs" ? "var(--text)" : "var(--text-dim)");
+      ctx.textAlign = "left";
+      ctx.fillText(label, s.x + r + 6, s.y);
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------
+   6. Interaction: pan, zoom, drag, click
+--------------------------------------------------------------------- */
+let hoveredNode = null;
+let selectedNode = null;
+let pointerDownInfo = null; // {node, isPan, startX, startY, moved}
+
+function hitTest(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const world = screenToWorld(clientX - rect.left, clientY - rect.top);
+  for (let i = visibleNodes.length - 1; i >= 0; i--) {
+    const node = visibleNodes[i];
+    const p = sim.get(node.id);
+    const r = radiusOf(node) * Math.max(0.55, Math.min(1.6, scale)) / scale;
+    const dx = world.x - p.x;
+    const dy = world.y - p.y;
+    if (dx * dx + dy * dy <= (r + 3) * (r + 3)) return node;
+  }
+  return null;
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  const node = hitTest(e.clientX, e.clientY);
+  pointerDownInfo = { node, startX: e.clientX, startY: e.clientY, moved: false, lastX: e.clientX, lastY: e.clientY };
+  if (node) {
+    sim.get(node.id).dragging = true;
+  } else {
+    canvas.classList.add("grabbing");
+  }
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  const hover = hitTest(e.clientX, e.clientY);
+  if (hover !== hoveredNode) {
+    hoveredNode = hover;
+    canvas.classList.toggle("hovering", !!hover && !pointerDownInfo);
+  }
+
+  if (!pointerDownInfo) {
+    if (FOLLOW_ENABLED) {
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const cx = window.innerWidth / 2;
+      const cy = window.innerHeight / 2;
+      // joystick model: (0,0) at the exact canvas center, deflection grows
+      // linearly toward the edges and saturates at MAX_FOLLOW like a stick
+      // hitting its gate — direction is circular, not clamped per axis.
+      const nx = (mx - cx) / cx;
+      const ny = (my - cy) / cy;
+      const mag = Math.min(1, Math.hypot(nx, ny) * FOLLOW_STRENGTH);
+      const angle = Math.atan2(ny, nx);
+      const deflect = mag * MAX_FOLLOW;
+      targetPanX = basePanX - Math.cos(angle) * deflect;
+      targetPanY = basePanY - Math.sin(angle) * deflect;
+      reheat();
+    }
+    return;
+  }
+  const dx = e.clientX - pointerDownInfo.lastX;
+  const dy = e.clientY - pointerDownInfo.lastY;
+  const totalMove = Math.hypot(e.clientX - pointerDownInfo.startX, e.clientY - pointerDownInfo.startY);
+  if (totalMove > 4) pointerDownInfo.moved = true;
+  pointerDownInfo.lastX = e.clientX;
+  pointerDownInfo.lastY = e.clientY;
+
+  if (pointerDownInfo.node) {
+    const rect = canvas.getBoundingClientRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const p = sim.get(pointerDownInfo.node.id);
+    p.x = world.x;
+    p.y = world.y;
+    render();
+  } else {
+    panX += dx;
+    panY += dy;
+    targetPanX = panX;
+    targetPanY = panY;
+    basePanX = panX;
+    basePanY = panY;
+    render();
+  }
+});
+
+function endPointer(e) {
+  if (!pointerDownInfo) return;
+  const info = pointerDownInfo;
+  pointerDownInfo = null;
+  canvas.classList.remove("grabbing");
+
+  if (info.node) {
+    const p = sim.get(info.node.id);
+    p.dragging = false;
+    if (!info.moved) {
+      handleNodeClick(info.node);
+    } else {
+      reheat();
+    }
+  }
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", () => {
+  if (!pointerDownInfo) { hoveredNode = null; canvas.classList.remove("hovering"); render(); }
+});
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const before = screenToWorld(mx, my);
+  const factor = Math.exp(-e.deltaY * 0.0016);
+  scale = Math.max(0.15, Math.min(3.2, scale * factor));
+  const after = worldToScreen(before.x, before.y);
+  panX += mx - after.x;
+  panY += my - after.y;
+  targetPanX = panX;
+  targetPanY = panY;
+  targetScale = scale;
+  basePanX = panX;
+  basePanY = panY;
+  render();
+}, { passive: false });
+
+function focusOn(node) {
+  const kids =
+    node.kind === "external"
+      ? node.owners.filter((o) => visibleIdSet.has(o.id))
+      : node.expanded
+      ? node.children.filter((c) => c.kind !== "leaf")
+      : [];
+  const box = [node, ...kids];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  box.forEach((n) => {
+    const pad = radiusOf(n) + 90;
+    minX = Math.min(minX, n.targetX - pad);
+    maxX = Math.max(maxX, n.targetX + pad);
+    minY = Math.min(minY, n.targetY - pad);
+    maxY = Math.max(maxY, n.targetY + pad);
+  });
+  const w = Math.max(80, maxX - minX);
+  const h = Math.max(80, maxY - minY);
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+
+  const panelW = Math.min(380, window.innerWidth * 0.88);
+  const viewW = Math.max(240, window.innerWidth - panelW);
+
+  targetScale = Math.max(0.3, Math.min(2.4, Math.min(viewW / w, window.innerHeight / h)));
+  targetPanX = viewW / 2 - cx * targetScale;
+  targetPanY = window.innerHeight / 2 - cy * targetScale;
+  basePanX = targetPanX;
+  basePanY = targetPanY;
+}
+
+function handleNodeClick(node) {
+  selectedNode = node;
+  showFieldsPanel(node);
+  node.expanded = !node.expanded;
+  rebuildVisible();
+  focusOn(node);
+  reheat();
+}
+
+/* ---------------------------------------------------------------------
+   7. Detail drawer — shows a container ball's own leaf fields
+--------------------------------------------------------------------- */
+const detailEl = document.getElementById("detail");
+const stageLabelEl = document.getElementById("stage-label");
+
+function containerLabel(kind) {
+  return { root: "Response root", vs: "Virtual service", object: "Object", array: "Array" }[kind] || kind;
+}
+
+function showFieldsPanel(node) {
+  if (node.kind === "external") {
+    document.getElementById("detail-type-dot").style.background = resolvedColor(colorOf(node));
+    document.getElementById("detail-type-text").textContent = "External object";
+    document.getElementById("detail-key").textContent = node.key;
+
+    document.getElementById("detail-path").innerHTML =
+      `<span class="seg">not listed in this JSON</span><span class="sep">›</span><span class="seg">${escapeHtml(node.uuid)}</span>`;
+
+    document.getElementById("detail-fields").innerHTML = node.owners
+      .map(
+        (o) => `
+          <div class="field-row">
+            <div class="field-row-head">
+              <span class="field-dot" style="background:${resolvedColor(colorOf(o))}"></span>
+              <span class="field-key">${escapeHtml(o.key)}</span>
+            </div>
+            <div class="field-value">references this object</div>
+          </div>`
+      )
+      .join("");
+
+    document.getElementById("detail-meta").innerHTML = `
+      <div><span class="field-label">Referenced by</span><span class="v">${node.owners.length} balls</span></div>
+      <div><span class="field-label">UUID</span><span class="v">${escapeHtml(node.uuid.slice(0, 8))}…</span></div>
+    `;
+
+    detailEl.classList.add("open");
+    return;
+  }
+
+  document.getElementById("detail-type-dot").style.background = resolvedColor(colorOf(node));
+  document.getElementById("detail-type-text").textContent = containerLabel(node.kind);
+  document.getElementById("detail-key").textContent = node.key;
+
+  const pathEl = document.getElementById("detail-path");
+  pathEl.innerHTML = node.path
+    .map((seg) => `<span class="seg">${escapeHtml(String(seg))}</span>`)
+    .join('<span class="sep">›</span>');
+
+  const fields = node.children.filter((c) => c.kind === "leaf");
+  const containerChildren = node.children.filter((c) => c.kind !== "leaf");
+  const fieldsEl = document.getElementById("detail-fields");
+  if (fields.length === 0) {
+    fieldsEl.innerHTML = `<div class="fields-empty">No direct values on this node — expand it to explore nested items.</div>`;
+  } else {
+    fieldsEl.innerHTML = fields
+      .map((f) => {
+        const isEmpty = f.value === "" || f.value === null;
+        const display = f.value === "" ? "(empty string)" : f.value === null ? "null" : String(f.value);
+        return `
+          <div class="field-row">
+            <div class="field-row-head">
+              <span class="field-dot" style="background:${resolvedColor(colorOf(f))}"></span>
+              <span class="field-key">${escapeHtml(String(f.key))}</span>
+            </div>
+            <div class="field-value${isEmpty ? " is-empty" : ""}">${escapeHtml(display)}</div>
+          </div>`;
+      })
+      .join("");
+  }
+
+  const metaEl = document.getElementById("detail-meta");
+  metaEl.innerHTML = `
+    <div><span class="field-label">Fields</span><span class="v">${fields.length}</span></div>
+    <div><span class="field-label">Nested</span><span class="v">${containerChildren.length}</span></div>
+    <div><span class="field-label">Depth</span><span class="v">${node.depth}</span></div>
+  `;
+
+  detailEl.classList.add("open");
+}
+function escapeHtml(s) {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+document.getElementById("detail-close").addEventListener("click", () => {
+  detailEl.classList.remove("open");
+  selectedNode = null;
+  render();
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && detailEl.classList.contains("open")) {
+    detailEl.classList.remove("open");
+    selectedNode = null;
+    render();
+  }
+});
+
+/* ---------------------------------------------------------------------
+   8. Toolbar
+--------------------------------------------------------------------- */
+document.getElementById("btn-expand").addEventListener("click", () => {
+  CONTAINERS.forEach((n) => (n.expanded = true));
+  rebuildVisible();
+});
+document.getElementById("btn-collapse").addEventListener("click", () => {
+  CONTAINERS.forEach((n) => (n.expanded = n.kind === "root"));
+  rebuildVisible();
+});
+document.getElementById("btn-reset").addEventListener("click", () => {
+  targetPanX = window.innerWidth / 2;
+  targetPanY = window.innerHeight / 2;
+  targetScale = 1;
+  basePanX = targetPanX;
+  basePanY = targetPanY;
+  reheat();
+});
+document.getElementById("btn-xrefs").addEventListener("click", (e) => {
+  showXrefs = !showXrefs;
+  e.currentTarget.classList.toggle("active", showXrefs);
+  rebuildVisible();
+});
+document.getElementById("btn-tree").addEventListener("click", (e) => {
+  showTree = !showTree;
+  e.currentTarget.classList.toggle("active", showTree);
+  render();
+});
+
+/* ---------------------------------------------------------------------
+   9. Go
+--------------------------------------------------------------------- */
+rebuildVisible();
+render();
+</script>
+</body>
+</html>
