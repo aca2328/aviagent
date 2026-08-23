@@ -32,6 +32,8 @@ docker-compose --env-file .env up -d                    # Ollama provider, inclu
 make docker-build / make docker-compose-up
 ```
 
+`docker-compose up -d` alone reuses the existing image — only `config.yaml` is volume-mounted, so Go/template/static edits need a rebuild: `docker-compose --env-file .env up -d --build`.
+
 There is no `cmd/server` directory — `main.go` lives at the repo root, so `go build .` (not `go build ./cmd/server`) is correct. Note `make build-all` in the Makefile still references `./cmd/server` and is currently broken; don't trust it without checking.
 
 ## Architecture
@@ -49,6 +51,10 @@ Provider selection is threaded through `internal/web/web-server.go` at nearly ev
 
 **Tool calling loop:** `internal/llm/tools.go` defines the Avi operations as LLM tool/function schemas (`GetAviToolDefinitions`). `web-server.go`'s `processChatMessage` → `executeToolCall` dispatches a model's tool call to the matching `avi.Client` method. `avi_tools_definition.json` at the repo root is a reference/export of these same tool definitions, not something the Go code loads at runtime — if you change `internal/llm/tools.go`, update this file too if it needs to stay in sync (check before assuming it's live).
 
+**Diagram download:** every successful tool call result gets appended to the assistant message as an `API Result (<tool_name>):` heading followed by a fenced `json` code block (`web-server.go` around the tool-call execution loop). `renderChatMessage` (same file) special-cases that fenced block: it wraps it in `<div class="api-result-block" data-tool="...">` and appends a `.diagram-download-btn` button. `web/static/js/app.js`'s `initializeDiagramDownload()` delegates clicks on that button, reads the adjacent `<pre><code>` JSON, fetches `web/static/diagram/template.html` (a generalized copy of `prototypes/node-link-diagram/index.html` — same node-link visualization, but "virtual service" wording swapped for neutral "top-level item" since this now renders arbitrary Avi API results, not just VS lists), swaps its embedded `DATA` between the `/*__AVI_DIAGRAM_DATA_START__*/`/`/*__AVI_DIAGRAM_DATA_END__*/` sentinel comments, and downloads the result as a standalone HTML file via a `Blob` + `<a download>`. No backend endpoint involved — generation is entirely client-side. If you touch `renderChatMessage`'s fence-parsing state machine, keep `pendingToolName` line up with the `API Result (` heading format, or the button/wrapper stops appearing.
+
+**Testing Blob downloads in-browser:** chat Export and the diagram download button both use `Blob` + `<a download>`; Claude-in-Chrome can't inspect a real OS save dialog. To verify, monkeypatch `URL.createObjectURL` and `HTMLAnchorElement.prototype.click` before triggering the action, to capture the Blob/filename instead.
+
 **Frontend:** Two UI implementations coexist:
 - `web/templates/*.html` + `web/static/{css,js}` — Gin-rendered HTML with HTMX (`/htmx/*` routes), this is what's actually served in production/Docker.
 - `web/src/` — a separate React/TypeScript app (`web/package.json`, react-scripts) that does not appear to be built into the Docker image or referenced by the Go server. Confirm which UI a task targets before editing.
@@ -59,9 +65,15 @@ Template/static paths are resolved relative to cwd at startup (`internal/web/web
 
 **Config:** `internal/config/config.go` uses Viper — defaults set in code, overridable by `config.yaml` and then environment variables (prefix-less binds like `AVI_HOST`, `MISTRAL_API_KEY`, `LLM_PROVIDER`, etc. — see `Load()` for the full env var list). `avi.host`/`username`/`password` are always required regardless of provider.
 
+`.env` is gitignored and, when present, typically holds real dev credentials plus a `SERVER_PORT` that overrides `config.yaml`'s placeholders (`docker-compose.yml` itself defaults `SERVER_PORT` to 8088, not `config.yaml`'s 8083) — check `.env` before assuming `config.yaml` reflects what's actually running. If testing a scratch local binary alongside the docker dev instance, override the port: `SERVER_PORT=<free-port> ./build/bin/aviagent -config config.yaml`.
+
 ## Git
 
 Solo project (single maintainer, no team review process). Direct commits and pushes to `main` are authorized — this overrides the global "never push directly to main" rule.
+
+## Versioning
+
+`AppVersion` in `main.go` is shown in the UI header badge and in `/api/health`, and is auto-bumped (patch version) on every commit by a `pre-commit` hook installed at `.git/hooks/pre-commit`. The hook stages its own edit to `main.go`, so a fresh commit always ships a new version without manual bumping. **This hook is not tracked by git** (`.git/hooks` never is) — a fresh clone needs it recreated (or copied from another clone) to get the same behavior.
 
 ## Repo layout notes
 

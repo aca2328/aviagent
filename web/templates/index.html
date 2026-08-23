@@ -18,6 +18,10 @@
                     <h3 class="mb-0">
                         <i class="fas fa-cloud me-2"></i>
                         VMware Avi LLM Agent
+                        <span class="app-version-badge badge bg-secondary ms-2" title="Build date: {{.buildDate}}">
+                            v<span id="app-version">{{.version}}</span>
+                        </span>
+                        <span id="build-date" class="d-none">{{.buildDate}}</span>
                     </h3>
                     <div class="d-flex align-items-center gap-3">
                         <div class="connection-status">

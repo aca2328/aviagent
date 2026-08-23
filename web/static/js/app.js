@@ -81,6 +81,80 @@ function displayVersionInfo() {
         });
 }
 
+// Node-link diagram download — generates a standalone copy of
+// web/static/diagram/template.html with the clicked API result's JSON
+// embedded, then downloads it via a Blob (see internal/web/web-server.go's
+// renderChatMessage, which wraps each "API Result" JSON block in a
+// .api-result-block with a .diagram-download-btn button).
+const DIAGRAM_TEMPLATE_URL = '/static/diagram/template.html';
+const DIAGRAM_DATA_SENTINEL = /\/\*__AVI_DIAGRAM_DATA_START__\*\/[\s\S]*?\/\*__AVI_DIAGRAM_DATA_END__\*\//;
+const DIAGRAM_TITLE_TEXT = 'Avi API Response — Node Graph';
+let diagramTemplatePromise = null;
+
+function getDiagramTemplate() {
+    if (!diagramTemplatePromise) {
+        diagramTemplatePromise = fetch(DIAGRAM_TEMPLATE_URL).then(function(response) {
+            if (!response.ok) {
+                throw new Error('Failed to load diagram template: ' + response.status);
+            }
+            return response.text();
+        });
+    }
+    return diagramTemplatePromise;
+}
+
+function initializeDiagramDownload() {
+    document.body.addEventListener('click', function(event) {
+        const button = event.target.closest('.diagram-download-btn');
+        if (!button) return;
+
+        const block = button.closest('.api-result-block');
+        const codeEl = block ? block.querySelector('pre code') : null;
+        if (!codeEl) return;
+
+        let data;
+        try {
+            data = JSON.parse(codeEl.textContent);
+        } catch (err) {
+            console.error('Diagram download: result is not valid JSON', err);
+            alert('This result could not be parsed as JSON, so a diagram cannot be generated.');
+            return;
+        }
+
+        const toolName = block.dataset.tool || '';
+        const originalHtml = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Preparing…';
+
+        getDiagramTemplate().then(function(templateHtml) {
+            const title = toolName ? toolName + ' — Node Graph' : DIAGRAM_TITLE_TEXT;
+            const dataBlock = '/*__AVI_DIAGRAM_DATA_START__*/\nconst DATA = ' +
+                JSON.stringify(data, null, 2) + ';\n/*__AVI_DIAGRAM_DATA_END__*/';
+
+            const html = templateHtml
+                .split(DIAGRAM_TITLE_TEXT).join(title)
+                .replace(DIAGRAM_DATA_SENTINEL, dataBlock);
+
+            const blob = new Blob([html], { type: 'text/html' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            a.download = (toolName || 'avi-result') + '-diagram-' + stamp + '.html';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }).catch(function(err) {
+            console.error('Failed to generate diagram', err);
+            alert('Failed to generate the diagram file: ' + err.message);
+        }).finally(function() {
+            button.disabled = false;
+            button.innerHTML = originalHtml;
+        });
+    });
+}
+
 // Simple Log Streaming
 let logPauseState = false;
 
@@ -770,7 +844,10 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Display version information
     displayVersionInfo();
-    
+
+    // Initialize node-link diagram download buttons on API results
+    initializeDiagramDownload();
+
     // Initialize tooltips for API logs link
     initializeTooltips();
     

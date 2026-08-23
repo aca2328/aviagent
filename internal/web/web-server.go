@@ -413,11 +413,17 @@ func toJSON(v interface{}) string {
 func renderChatMessage(message string) template.HTML {
 	var b strings.Builder
 	inCodeBlock := false
+	blockIsAPIResult := false
+	pendingToolName := ""
 
 	for _, line := range strings.Split(message, "\n") {
 		if inCodeBlock {
 			if line == "```" {
 				b.WriteString("</code></pre>")
+				if blockIsAPIResult {
+					b.WriteString("</div>")
+					blockIsAPIResult = false
+				}
 				inCodeBlock = false
 			} else {
 				b.WriteString(html.EscapeString(line))
@@ -433,13 +439,43 @@ func renderChatMessage(message string) template.HTML {
 				b.WriteString(html.EscapeString(line[3 : len(line)-3]))
 				b.WriteString(`</code>`)
 			} else {
-				b.WriteString(`<pre class="bg-light p-3 rounded"><code>`)
+				jsonID := ""
+				if pendingToolName != "" && line == "```json" {
+					blockIsAPIResult = true
+					jsonID = "api-result-" + uuid.New().String()
+					b.WriteString(`<div class="api-result-block" data-tool="`)
+					b.WriteString(html.EscapeString(pendingToolName))
+					b.WriteString(`">`)
+					b.WriteString(`<div class="api-result-toolbar d-flex gap-2 mb-2">`)
+					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary diagram-download-btn" title="Download this result as a standalone node-link diagram page">`)
+					b.WriteString(`<i class="fas fa-diagram-project"></i> Download Diagram</button>`)
+					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
+					b.WriteString(jsonID)
+					b.WriteString(`" aria-expanded="false" aria-controls="`)
+					b.WriteString(jsonID)
+					b.WriteString(`"><i class="fas fa-code"></i> Show/Hide JSON</button>`)
+					b.WriteString(`</div>`)
+				}
+				b.WriteString(`<pre class="bg-light p-3 rounded`)
+				if jsonID != "" {
+					b.WriteString(` collapse" id="`)
+					b.WriteString(jsonID)
+				}
+				b.WriteString(`"><code>`)
 				inCodeBlock = true
 			}
-		case strings.HasPrefix(line, "API Result:"):
+			pendingToolName = ""
+		case strings.HasPrefix(line, "API Result"):
 			b.WriteString(`<h6 class="mt-3 mb-2"><i class="fas fa-code"></i> `)
 			b.WriteString(html.EscapeString(line))
 			b.WriteString(`</h6>`)
+			// heading looks like "API Result (tool_name):" — used to name the
+			// downloadable diagram; falls back to empty if not present.
+			if open := strings.Index(line, "("); open != -1 {
+				if closeIdx := strings.Index(line[open:], ")"); closeIdx != -1 {
+					pendingToolName = line[open+1 : open+closeIdx]
+				}
+			}
 		case strings.HasPrefix(line, "##"):
 			b.WriteString(`<h5 class="mt-3 mb-2">`)
 			b.WriteString(html.EscapeString(strings.TrimPrefix(line, "##")))
@@ -814,6 +850,8 @@ func (s *Server) handleIndex(c *gin.Context) {
 		"title":        "VMware Avi LLM Agent",
 		"models":       models,
 		"defaultModel": defaultModel,
+		"version":      s.version,
+		"buildDate":    s.buildDate,
 	})
 }
 
@@ -1147,7 +1185,7 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 				if err != nil {
 					resultJSON = []byte(fmt.Sprintf("%v", result))
 				}
-				llmResponse.Message += fmt.Sprintf("\n\nAPI Result:\n```json\n%s\n```", resultJSON)
+				llmResponse.Message += fmt.Sprintf("\n\nAPI Result (%s):\n```json\n%s\n```", toolCall.Function.Name, resultJSON)
 				s.broadcastOperationLog("success", "Tool call succeeded", map[string]interface{}{
 					"tool": toolCall.Function.Name,
 					"result": result,

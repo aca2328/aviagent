@@ -1,0 +1,2804 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Avi API Response — Node Graph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* Palette built in OKLCH and validated with the data-viz six checks.
+       Neutrals are one hue family (264 deg) stepped evenly in lightness — that
+       even ramp is what makes the chrome read as "smooth". The three ball
+       hues sit at near-equal lightness with moderate chroma, and are the only
+       triad that survives colour-vision-deficiency separation at all-pairs:
+       green and teal collapse against the rose under protanopia/deuteranopia
+       (measured ΔE 3.0–5.8), so blue / rose / amber is a measured result,
+       not a taste call. Balls: worst all-pairs CVD ΔE 12.6, normal 17.1. */
+    --bg: #070b14;
+    --bg-alt: #0e121a;
+    --surface: #171b24;
+    --surface-2: #11151d;
+    --surface-3: #21262f;
+    --border: #343b48;
+    --border-soft: #222732;
+    --text: #eff2f8;
+    --text-dim: #aab1bf;
+    --text-faint: #7e8799;
+    --accent: #61d5c0;
+    --accent-dim: #206b5f;
+    --accent-soft: rgba(97, 213, 192, 0.12);
+    --link-line: rgba(98, 105, 118, 0.30);
+    --xref-line: #ef8d67;
+    --xref-line-weak: #60636a;
+    --match: #e9deb5;
+
+    /* ball identity — the load-bearing categorical channel */
+    --n-vs: #5a8ee4;
+    --n-object: #c76d9a;
+    --n-array: #cb8315;
+
+    /* panel value types — a secondary channel: every dot sits beside its key
+       and its literal value, so identity is never colour-alone here */
+    --n-string: #29a895;
+    --n-number: #c7852a;
+    --n-boolean: #4e90d2;
+    --n-null: #71747b;
+
+    --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    overflow: hidden;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition-duration: 0.001ms !important; }
+  }
+
+  canvas#graph {
+    position: fixed; inset: 0; display: block;
+    background: var(--bg);
+    touch-action: none;
+    cursor: grab;
+  }
+  canvas#graph.grabbing { cursor: grabbing; }
+  canvas#graph.hovering { cursor: pointer; }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 14px 20px;
+    background: linear-gradient(to bottom, rgba(7,11,20,0.94), rgba(7,11,20,0.72) 78%, transparent);
+    pointer-events: none;
+  }
+  #topbar > * { pointer-events: auto; }
+  /* the detail drawer sits above the top bar, so pull the bar in when it
+     opens — otherwise half the toolbar disappears under the panel */
+  @media (min-width: 821px) {
+    body.panel-open #topbar { right: 400px; }
+  }
+  .toolbar { min-width: 0; }
+
+  .brand { display: flex; flex-direction: column; gap: 2px; }
+  .brand h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  .brand .sub {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--text-faint); letter-spacing: 0.02em; white-space: nowrap;
+  }
+  .brand h1 { white-space: nowrap; }
+  .brand .sub span { color: var(--accent); }
+
+  .toolbar { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+  .toolbar button {
+    font-family: var(--font-ui); font-size: 12.5px; font-weight: 500;
+    color: var(--text-dim);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 7px; padding: 7px 12px; cursor: pointer;
+    transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  }
+  .toolbar button:hover { color: var(--text); border-color: var(--accent-dim); background: var(--surface-2); }
+  .toolbar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .toolbar button.active {
+    color: var(--xref-line); border-color: var(--xref-line);
+    background: rgba(239, 141, 103, 0.12);
+  }
+  .toolbar .sep { width: 1px; height: 20px; background: var(--border); }
+  .toolbar button.search-trigger {
+    display: inline-flex; align-items: center; gap: 8px;
+    color: var(--text-faint); min-width: 168px; justify-content: space-between;
+  }
+  .toolbar button.search-trigger .glyph { font-size: 14px; line-height: 1; }
+  .toolbar button.search-trigger .label { flex: 1; text-align: left; }
+  /* the drawer takes 400px off the bar — drop the search label rather than
+     let the toolbar wrap onto a second row over the canvas */
+  @media (min-width: 821px) {
+    body.panel-open .toolbar button.search-trigger { min-width: 0; }
+    body.panel-open .toolbar button.search-trigger .label { display: none; }
+    /* the stat line is ancillary while you're reading a node — dropping it
+       is what actually buys the room to keep the toolbar on one row */
+    body.panel-open .brand .sub { display: none; }
+  }
+  .toolbar button.search-trigger:hover { color: var(--text-dim); }
+  kbd {
+    font-family: var(--font-mono); font-size: 10.5px;
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px; color: var(--text-dim);
+  }
+
+  /* ---------- legend ---------- */
+  #legend {
+    position: fixed; left: 20px; bottom: 20px; z-index: 10;
+    background: rgba(23, 27, 36, 0.92);
+    backdrop-filter: blur(6px);
+    border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    display: flex; flex-direction: column; gap: 7px; min-width: 168px;
+  }
+  #legend.collapsed .legend-body { display: none; }
+  .legend-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; cursor: pointer; user-select: none;
+  }
+  .legend-body { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+  #legend .legend-title {
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 2px;
+  }
+  .legend-head .legend-title { margin-bottom: 0; }
+  .legend-caret { color: var(--text-faint); font-size: 10px; transition: transform 0.15s ease; }
+  #legend.collapsed .legend-caret { transform: rotate(-90deg); }
+  .legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .legend-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .legend-line { width: 16px; height: 0; border-top: 2px dashed var(--xref-line); flex: none; }
+  .legend-line.weak { border-top-color: var(--xref-line-weak); border-top-style: dotted; }
+  .legend-sep { height: 1px; background: var(--border-soft); margin: 2px 0; }
+
+  /* ---------- hint ---------- */
+  #hint {
+    position: fixed; right: 20px; bottom: 20px; z-index: 10;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-faint); text-align: right; line-height: 1.9;
+  }
+  #hint kbd { margin: 0 1px; }
+  body.panel-open #hint { display: none; }
+
+  /* ---------- hover tooltip ---------- */
+  #tooltip {
+    position: fixed; z-index: 30; pointer-events: none;
+    background: rgba(14, 18, 26, 0.97);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 11px;
+    max-width: 320px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    opacity: 0; transition: opacity 0.1s ease;
+  }
+  #tooltip.show { opacity: 1; }
+  #tooltip .tt-key {
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600;
+    color: var(--text); word-break: break-all; line-height: 1.35;
+  }
+  #tooltip .tt-kind {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-faint); margin-bottom: 4px;
+  }
+  #tooltip .tt-dot { width: 7px; height: 7px; border-radius: 50%; }
+  #tooltip .tt-meta {
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border-soft);
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);
+    display: flex; flex-wrap: wrap; gap: 4px 12px;
+  }
+  #tooltip .tt-meta b { color: var(--text); font-weight: 500; }
+  #tooltip .tt-preview {
+    margin-top: 6px; font-family: var(--font-mono); font-size: 11px;
+    color: var(--text-faint); line-height: 1.5;
+  }
+  #tooltip .tt-preview span { color: var(--text-dim); }
+
+  /* ---------- search overlay ---------- */
+  #search-overlay {
+    position: fixed; inset: 0; z-index: 40;
+    background: rgba(4, 6, 12, 0.66);
+    backdrop-filter: blur(3px);
+    display: none; justify-content: center; align-items: flex-start;
+    padding: 12vh 20px 20px;
+  }
+  #search-overlay.open { display: flex; }
+  #search-box {
+    width: 100%; max-width: 620px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  #search-input-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 16px; border-bottom: 1px solid var(--border-soft);
+  }
+  #search-input-row .glyph { color: var(--text-faint); font-size: 14px; }
+  #search-input {
+    flex: 1; background: none; border: none; outline: none;
+    color: var(--text); font-family: var(--font-mono); font-size: 14.5px;
+  }
+  #search-input::placeholder { color: var(--text-faint); }
+  #search-count { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+  #search-results { max-height: 52vh; overflow-y: auto; }
+  .sr-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .sr-row.sel { background: var(--surface-3); border-left-color: var(--accent); }
+  .sr-row:hover { background: var(--surface-2); }
+  .sr-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .sr-main { flex: 1; min-width: 0; }
+  .sr-key {
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sr-key mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
+  .sr-path {
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left;
+  }
+  .sr-tag {
+    font-family: var(--font-mono); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-faint);
+    border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; flex: none;
+  }
+  .sr-empty { padding: 22px 16px; text-align: center; color: var(--text-faint); font-size: 13px; }
+  #search-foot {
+    display: flex; gap: 16px; padding: 9px 16px;
+    border-top: 1px solid var(--border-soft);
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+  }
+
+  /* ---------- detail panel ---------- */
+  #detail {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 400px; max-width: 92vw;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    z-index: 20;
+    transform: translateX(100%);
+    transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1);
+    display: flex; flex-direction: column;
+    box-shadow: -24px 0 48px rgba(0,0,0,0.35);
+  }
+  #detail.open { transform: translateX(0); }
+
+  #detail .detail-head {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 10px; padding: 16px 16px 12px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  #detail .detail-type {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 7px;
+  }
+  #detail .type-dot { width: 8px; height: 8px; border-radius: 50%; }
+  #detail .detail-key { font-size: 17px; font-weight: 600; word-break: break-word; line-height: 1.3; }
+  .head-actions { display: flex; gap: 6px; flex: none; }
+  .icon-btn {
+    width: 28px; height: 28px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface-2);
+    color: var(--text-dim); cursor: pointer; font-size: 13px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-ui);
+    transition: color 0.12s ease, border-color 0.12s ease;
+  }
+  .icon-btn:hover { color: var(--text); border-color: var(--accent-dim); }
+  .icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .icon-btn.wide { width: auto; padding: 0 10px; font-size: 11.5px; gap: 6px; }
+
+  #detail .detail-body {
+    padding: 14px 16px 24px; overflow-y: auto; flex: 1;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .field-label {
+    font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-faint); margin-bottom: 6px;
+  }
+  .sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+  #detail-path {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text-dim);
+    line-height: 1.9; word-break: break-word;
+  }
+  #detail-path .seg {
+    color: var(--text-dim); background: none; border: none; padding: 1px 3px;
+    font: inherit; cursor: pointer; border-radius: 3px;
+  }
+  #detail-path .seg:hover { color: var(--accent); background: var(--accent-soft); }
+  #detail-path .seg:disabled { cursor: default; }
+  #detail-path .seg:disabled:hover { color: var(--text-dim); background: none; }
+  #detail-path .sep { color: var(--text-faint); margin: 0 1px; }
+  #detail-path .seg.last { color: var(--accent); }
+
+  #field-filter {
+    width: 100%; margin-bottom: 8px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 6px 9px;
+    color: var(--text); font-family: var(--font-mono); font-size: 11.5px;
+    outline: none;
+  }
+  #field-filter:focus { border-color: var(--accent-dim); }
+  #field-filter::placeholder { color: var(--text-faint); }
+
+  .fields-list {
+    display: flex; flex-direction: column;
+    border: 1px solid var(--border-soft); border-radius: 8px;
+    background: var(--surface-2); overflow: hidden;
+  }
+  .field-row { padding: 9px 12px; border-bottom: 1px solid var(--border-soft); position: relative; }
+  .field-row:last-child { border-bottom: none; }
+  .field-row.flash { animation: flashrow 1.6s ease-out; }
+  @keyframes flashrow {
+    0%, 35% { background: rgba(233, 222, 181, 0.14); }
+    100% { background: transparent; }
+  }
+  .field-row-head { display: flex; align-items: center; gap: 7px; margin-bottom: 4px; }
+  .field-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .field-key { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim); flex: 1; min-width: 0; word-break: break-all; }
+  .field-key mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
+  .copy-btn {
+    opacity: 0; flex: none;
+    background: var(--surface-3); border: 1px solid var(--border);
+    color: var(--text-faint); border-radius: 4px;
+    font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+    padding: 2px 6px; cursor: pointer; transition: opacity 0.12s ease, color 0.12s ease;
+  }
+  .field-row:hover .copy-btn, .copy-btn:focus-visible { opacity: 1; }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+  .field-value {
+    font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5;
+    color: var(--text); word-break: break-word; padding-left: 14px;
+  }
+  .field-value mark { background: rgba(233, 222, 181, 0.20); color: var(--match); border-radius: 2px; padding: 0 1px; }
+  .field-value.is-empty { color: var(--text-faint); font-style: italic; }
+  .ref-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: rgba(239, 141, 103, 0.12);
+    border: 1px solid rgba(239, 141, 103, 0.38);
+    color: var(--xref-line);
+    border-radius: 5px; padding: 2px 7px;
+    font-family: var(--font-mono); font-size: 11.5px;
+    cursor: pointer; text-align: left; max-width: 100%;
+  }
+  .ref-link:hover { background: rgba(239, 141, 103, 0.22); }
+  .ref-link .arrow { opacity: 0.7; font-size: 10px; }
+  .fields-empty {
+    padding: 13px; font-size: 12.5px; color: var(--text-faint);
+    font-style: italic; line-height: 1.5;
+  }
+
+  .child-list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .child-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--surface-2); border: 1px solid var(--border-soft);
+    border-radius: 6px; padding: 4px 9px;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--text-dim);
+    cursor: pointer; max-width: 100%;
+  }
+  .child-chip:hover { color: var(--text); border-color: var(--accent-dim); }
+  .child-chip .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .child-chip .chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .child-chip .chip-n { color: var(--text-faint); font-size: 10.5px; }
+
+  #detail-meta {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12px; color: var(--text-dim);
+  }
+  #detail-meta div { display: flex; flex-direction: column; gap: 3px; }
+  #detail-meta .v { font-family: var(--font-mono); color: var(--text); }
+
+  /* ---------- toast ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px);
+    z-index: 50; pointer-events: none;
+    background: var(--surface-3); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 14px;
+    font-family: var(--font-mono); font-size: 12px; color: var(--text);
+    opacity: 0; transition: opacity 0.16s ease, transform 0.16s ease;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 820px) {
+    #legend { display: none; }
+    #hint { display: none; }
+    .brand .sub { display: none; }
+    .toolbar button.search-trigger { min-width: 0; }
+    .toolbar button.search-trigger .label,
+    .toolbar button.search-trigger kbd { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="graph"></canvas>
+
+<div id="topbar">
+  <div class="brand">
+    <h1>Avi API Response — Node Graph</h1>
+    <div class="sub"><span id="stat-vs">0</span> top-level items · <span id="stat-visible">0</span> nodes on screen · <span id="stat-leaves">0</span> values total</div>
+  </div>
+  <div class="toolbar">
+    <button id="btn-search" class="search-trigger" title="Search keys, values and paths">
+      <span class="glyph">⌕</span><span class="label">Search data…</span><kbd>/</kbd>
+    </button>
+    <span class="sep"></span>
+    <button id="btn-depth" title="Open every top-level item one level (click a ball to go deeper)">Expand 1 Level</button>
+    <button id="btn-expand-all" title="Open every ball at every depth">Expand all</button>
+    <button id="btn-collapse" title="Collapse every top-level item">Collapse</button>
+    <button id="btn-fit" title="Fit all visible balls in view">Fit</button>
+    <span class="sep"></span>
+    <button id="btn-focus" title="Dim everything except the selection and its links">Focus</button>
+    <button id="btn-xrefs" class="active" title="Show cross-reference links">Cross-refs</button>
+    <button id="btn-tree" class="active" title="Show parent/child structure links">Structure</button>
+  </div>
+</div>
+
+<div id="legend">
+  <div class="legend-head" id="legend-head">
+    <span class="legend-title">Legend</span>
+    <span class="legend-caret">▾</span>
+  </div>
+  <div class="legend-body">
+    <div class="legend-title">Ball types</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-vs)"></span>Top-level item</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-object)"></span>Object</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-array)"></span>Array</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--xref-line-weak)"></span>External object</div>
+    <div class="legend-sep"></div>
+    <div class="legend-title">Field colors (in panel)</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-string)"></span>String value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-number)"></span>Number value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-boolean)"></span>Boolean value</div>
+    <div class="legend-row"><span class="legend-dot" style="background:var(--n-null)"></span>Null / empty</div>
+    <div class="legend-sep"></div>
+    <div class="legend-title">Cross-reference</div>
+    <div class="legend-row"><span class="legend-line"></span>Ref target listed in JSON</div>
+    <div class="legend-row"><span class="legend-line weak"></span>Shared ref, target not in JSON</div>
+  </div>
+</div>
+
+<div id="hint">
+  <kbd>click</kbd> expand &amp; inspect · <kbd>dbl-click</kbd> collapse<br />
+  <kbd>/</kbd> search · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> walk the tree · <kbd>F</kbd> fit
+</div>
+
+<div id="tooltip"></div>
+
+<div id="search-overlay">
+  <div id="search-box">
+    <div id="search-input-row">
+      <span class="glyph">⌕</span>
+      <input id="search-input" type="text" placeholder="Search keys, values, paths…  (try: pool_ref, ENABLED, 443)" autocomplete="off" spellcheck="false" />
+      <span id="search-count"></span>
+    </div>
+    <div id="search-results"></div>
+    <div id="search-foot">
+      <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+      <span><kbd>↵</kbd> reveal in graph</span>
+      <span><kbd>esc</kbd> close</span>
+    </div>
+  </div>
+</div>
+
+<div id="detail">
+  <div class="detail-head">
+    <div>
+      <div class="detail-type"><span class="type-dot" id="detail-type-dot"></span><span id="detail-type-text"></span></div>
+      <div class="detail-key" id="detail-key"></div>
+    </div>
+    <div class="head-actions">
+      <button class="icon-btn" id="detail-copy" title="Copy this node's JSON subtree">⧉</button>
+      <button class="icon-btn" id="detail-toggle" title="Collapse / expand this ball">−</button>
+      <button class="icon-btn" id="detail-close" title="Close (Esc)">×</button>
+    </div>
+  </div>
+  <div class="detail-body">
+    <div>
+      <div class="field-label">Path</div>
+      <div id="detail-path"></div>
+    </div>
+    <div id="detail-children-sec">
+      <div class="field-label">Nested balls</div>
+      <div id="detail-children" class="child-list"></div>
+    </div>
+    <div id="detail-fields-sec">
+      <div class="sec-head">
+        <div class="field-label">Fields</div>
+        <div class="field-label" id="detail-fields-count"></div>
+      </div>
+      <input id="field-filter" type="text" placeholder="filter fields…" autocomplete="off" spellcheck="false" />
+      <div id="detail-fields" class="fields-list"></div>
+    </div>
+    <div id="detail-meta"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ---------------------------------------------------------------------
+   1. Data — verbatim contents of api_answer_model.json. The app's
+   "Download Diagram" button fetches this file and replaces everything
+   between the AVI_DIAGRAM_DATA sentinels with the actual API result
+   before offering it for download, so the sentinels must stay intact.
+--------------------------------------------------------------------- */
+/*__AVI_DIAGRAM_DATA_START__*/
+const DATA = {
+  "count": 8,
+  "results": [
+    {
+      "_last_modified": "1783547226956301",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-fa53624c-7227-4b71-8ed9-93b063af9d3c", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "parent1",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-c5899a79-6374-45d8-8f13-03ddd70969d6",
+      "redis_db": 8,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 443, "port_range_end": 443 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_key_and_certificate_refs": [
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-7f530ed8-f5d6-4f2a-b30a-6bbf4e19fd0c",
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-1655d5c2-ba2a-48da-a42d-05590e326031"
+      ],
+      "ssl_profile_ref": "https://35.164.151.144/api/sslprofile/sslprofile-f1fdf9d2-026f-4bad-af0a-6e7035b02ae3",
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "bG2fRRr0VjTd1Q6nUAhwOA==", "hmac_key": "WIQEjCnNmhbTuud4prfgog==", "name": "f2539fef-0bb9-4623-8a86-aab493d16ff1" },
+        { "aes_key": "W9Zhf76YDLkpG6vnpjW9zQ==", "hmac_key": "w0jzfpn9lx/va9wo3u0sdA==", "name": "fa2fb172-4647-486b-b657-9c91592a9d95" },
+        { "aes_key": "DYM+oAZ2aLYER1vrTq0DWQ==", "hmac_key": "qMSaRkWNTmZlYjVVZtKDZA==", "name": "d1c381ba-c7d8-4252-957a-f1fc6e13a202" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_PARENT",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "version": 8773,
+      "vh_child_vs_uuid": [
+        "virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+        "virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+        "virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+        "virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6"
+      ],
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 860353 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-a75ec8a0-31ff-45ec-b902-b504d1392094",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547226985751",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": false,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-1f9f1974-3cd7-40bd-964a-556d48e7d561",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "dns_policies": [
+        { "dns_policy_ref": "https://35.164.151.144/api/dnspolicy/dnspolicy-a57264dd-474b-4f7c-97f3-6c28f34efb1b", "index": 11 }
+      ],
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "ns1.aws.avilab.eu",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-d1a55339-a939-4783-ae11-3528242aa0d2",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-1f4258da-a941-4381-9e20-748b94e34604",
+      "redis_db": 11,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 53, "port_range_end": 53 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "override_network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5", "port": 53, "port_range_end": 53 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "SicgpXKZJ0FQC1MQVZwjCA==", "hmac_key": "NV7eJHkOL63ocxO6eSk7Vg==", "name": "2060786f-4de1-474c-9a3e-ae9dd7d429dd" },
+        { "aes_key": "iqzsdHHUGvQi6d4BeYCkqg==", "hmac_key": "SJRKBrgYl+7DSFcpSy84uA==", "name": "96637938-d2ab-49d1-8c58-feff50cd8597" },
+        { "aes_key": "z+NvpRy7qIFdYB2ds2RsKg==", "hmac_key": "IvZ0SQgpVV9ETQTyDbK5lw==", "name": "11e57bb0-3a14-4203-abf2-1de96184fb3c" }
+      ],
+      "topology_policies": [
+        { "dns_policy_ref": "https://35.164.151.144/api/dnspolicy/dnspolicy-473d1e63-83a3-4752-a358-3333ff041961", "index": 11 }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-285e0db0-541e-440a-aebc-3bb4158e33ad",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-285e0db0-541e-440a-aebc-3bb4158e33ad",
+      "version": 12714,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 68247 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" },
+        { "first_se_assigned_time": { "secs": 1773713731, "usecs": 266649 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "2" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-5273a41a-6a5d-4d4c-9ddf-c7a1add8cea1",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227015044",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 0 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 0,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-33fda8b2-9057-432b-aa33-521c39f5d8b3",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-0c67bdb4-0ba4-422b-8a35-ee91e4ac78e0",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-7c1b9433-bdf8-479a-acfe-4919fa399037", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "vs-sb2",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-ac42aee0-43a3-41e2-bb3e-9db2ccb1dd3e",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-36d0c525-82aa-4532-89c9-12b564bf0bbf",
+      "redis_db": 2,
+      "redis_port": 5028,
+      "remove_listening_port_on_vs_down": false,
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 8025, "port_range_end": 8025 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 5002, "port_range_end": 5002 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "I18IF50Sr5OTO8uU0KIgaQ==", "hmac_key": "eYWZQu7oPYboenEe/eKKyg==", "name": "f62a87ad-177c-4e0b-adc3-af8290bfe853" },
+        { "aes_key": "EvnhcCn+BRFoPTTKKjr/qg==", "hmac_key": "l3cQSvhIUPWQTwX+0trcRg==", "name": "ac270ecd-9818-4469-ac64-eb9a42449aa3" },
+        { "aes_key": "RXo6yPdYpNq92yRARed/Dw==", "hmac_key": "hB3KIVIb61B1+aiL1bgXyw==", "name": "bc3371e1-7e76-4178-b07e-08e7c41fc9e3" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-a455d34c-64df-4de0-a20d-adfd28ae68a6",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-a455d34c-64df-4de0-a20d-adfd28ae68a6",
+      "version": 5559,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 70320 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vs_datascripts": [
+        { "index": 1, "vs_datascript_set_ref": "https://35.164.151.144/api/vsdatascriptset/vsdatascriptset-47932346-cd0b-450c-b2a0-f5bf9b45e9b3" }
+      ],
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-8e9538c4-26c1-475c-806f-76ba2d078edb",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227047680",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-0c67bdb4-0ba4-422b-8a35-ee91e4ac78e0",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "csrf_policy_ref": "https://35.164.151.144/api/csrfpolicy/csrfpolicy-1c375680-6e3e-40c2-838b-723ec8c018d7",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": true,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-4452bdd8-0d4c-4f48-a0bd-41c6bf47f024", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "werpusUS",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-f0d224c7-21e5-474d-b46b-6cd98b48ec2e",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-aea61cb5-1020-4c00-8d6d-9dac0bf6fa05",
+      "redis_db": 4,
+      "redis_port": 5022,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "services": [
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 80, "port_range_end": 80 },
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "override_application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-8a64542d-3478-422a-9a35-820456053652", "override_network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f38effbe-2406-43ce-91fc-e435712af5c1", "port": 8080, "port_range_end": 8080 },
+        { "enable_http2": false, "enable_ssl": true, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 443, "port_range_end": 443 },
+        { "enable_http2": false, "enable_ssl": false, "horizon_internal_ports": false, "is_active_ftp_data_port": false, "is_passive_ftp_data_port": false, "port": 777, "port_range_end": 777 }
+      ],
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_key_and_certificate_refs": [
+        "https://35.164.151.144/api/sslkeyandcertificate/sslkeyandcertificate-1655d5c2-ba2a-48da-a42d-05590e326031"
+      ],
+      "ssl_profile_ref": "https://35.164.151.144/api/sslprofile/sslprofile-f1fdf9d2-026f-4bad-af0a-6e7035b02ae3",
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "ZCamrgftkRRY50kHAJ4bpg==", "hmac_key": "Rw18DgIYn6y4hWjbmuCopg==", "name": "1aa7d331-1dc4-43bb-b0dc-47f38eb92d1f" },
+        { "aes_key": "28wDPs8lxgJUK9W6DU4W4Q==", "hmac_key": "J46rKnqtCq6fJob7Wm987w==", "name": "750edf28-4a09-482d-9d6a-ebe4be6d5ad1" },
+        { "aes_key": "Of5BYVpkfpFtqx3GKG6+Fw==", "hmac_key": "/IoCLtb84N5k4BQkOlsqqQ==", "name": "db40ae44-ef66-42b6-b087-35e96fbbcc67" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_NORMAL",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-bbe1fe34-e388-4883-8fb8-269288e9c103",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-bbe1fe34-e388-4883-8fb8-269288e9c103",
+      "version": 7472,
+      "vh_type": "VS_TYPE_VH_SNI",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714271, "usecs": 114344 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "vsvip_ref": "https://35.164.151.144/api/vsvip/vsvip-2649b5f1-fc02-494e-8c6b-1c17130df2f1",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227076154",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": false,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": false, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": false },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-86fe739a-5386-460d-a2a9-f27c247a9106", "index": 11 }
+      ],
+      "ign_pool_net_reach": true,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "VS-Demo-2",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-55d53b34-f4cf-48fd-a6f2-03068e3125e8",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-d118470b-fb01-467e-8a89-b54c1fc35d94",
+      "redis_db": 14,
+      "redis_port": 5023,
+      "remove_listening_port_on_vs_down": false,
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "VNINEEBDJvUykcMmzDDuzw==", "hmac_key": "ngrbwuk/nvAWSHP2HnHEBg==", "name": "014e19ac-0fd9-4eec-a57f-48520eba8bb5" },
+        { "aes_key": "TxsFFBH+bfZOG3BHSGB3Ig==", "hmac_key": "IR3xLfi95N5eOXbGXPdkAQ==", "name": "2c4801f8-4fb9-4d0b-8c8a-295421a975b0" },
+        { "aes_key": "KIK/HC3ANxMbsoJaWowa1w==", "hmac_key": "yBbEquohDjw3o9RuTLtSjg==", "name": "5377a96a-deca-4fae-99e8-d5ec70ae4b84" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-cbc8b3ef-6de1-4091-abb7-30297054b0d6",
+      "version": 8101,
+      "vh_matches": [
+        { "host": "Host1", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "string_group_refs": [ "https://35.164.151.144/api/stringgroup/stringgroup-0655673a-e00a-4c52-a87c-8d3fc2562429" ] } }, "name": "Rule 1" } ] },
+        { "host": "Host 2", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "string_group_refs": [ "https://35.164.151.144/api/stringgroup/stringgroup-b74ebe9f-c687-430a-9304-8b5f0d7b4e2a" ] } }, "name": "Rule 2" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 928197 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227103596",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-3464c119-ed18-44aa-a9a6-1d70a5d2220b", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "store",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-fcde1e39-2039-4ee3-857a-59f51e35bcca",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 10,
+      "redis_port": 5027,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "2ALihie+9AWqvYCBe5PS/Q==", "hmac_key": "U0S8qyn9AfZo5O0KShI7qQ==", "name": "f5188995-fa20-4da1-aec7-09fa2ad8d9a3" },
+        { "aes_key": "BOCkyZE+xeLDGwfWuLWnoQ==", "hmac_key": "xrvisSvZ6QhY7ySwnaoHaA==", "name": "a42d1d72-6ae2-4874-ae2c-c2c328053191" },
+        { "aes_key": "wHBQEBkJ4Fy0oAS55oeIxQ==", "hmac_key": "FfJ/SdpdrOLUyzxxrEtr+A==", "name": "f71f5f8b-3acb-4e11-9834-d4227ef23d79" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-cd1b6fe6-1e7e-49ab-bdec-41a50a3a9f35",
+      "version": 8781,
+      "vh_matches": [
+        { "host": "store.aws.avilab.top", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 896352 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227131117",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-5b66e07b-2afd-44ea-9e2c-41df73a0f51c",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-93d7cc92-e28b-4556-88f1-4a413756048c", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "yesserv",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-b4415803-32b6-46ec-bcea-1ab14f2d9429",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 1,
+      "redis_port": 5025,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "6s/HzcBBcmhamDxB3K9pFg==", "hmac_key": "ME6YhwwMoq4yZsMY24Zi8A==", "name": "1d6e7c4f-914b-4d38-b85b-a873d57a09c4" },
+        { "aes_key": "NTmGxkfHYJLyzd+ndWiJGg==", "hmac_key": "eTBdZq4j741Z2jpePpyYlA==", "name": "e6ea0f1a-6cc0-4625-9693-2e29ae581a63" },
+        { "aes_key": "ivtZ02jVidIPuotkwkl6wQ==", "hmac_key": "1QKv9m5+Gy6+YdD5J4+huw==", "name": "d504fa9f-aab1-4a71-bbbd-7cd3e332017f" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-63caf860-1222-489c-8bfe-35403dce0a76",
+      "version": 8783,
+      "vh_matches": [
+        { "host": "yesserv.aws.avilab.eu", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] },
+        { "host": "app.gslb.avilab.eu", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 891835 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "waf_policy_ref": "https://35.164.151.144/api/wafpolicy/wafpolicy-f01b55ef-f352-47bc-9260-bd56fb2c9843",
+      "weight": 1
+    },
+    {
+      "_last_modified": "1783547227157846",
+      "active_standby_se_tag": "ACTIVE_STANDBY_SE_1",
+      "advertise_down_vs": false,
+      "allow_invalid_client_cert": false,
+      "analytics_policy": {
+        "all_headers": true,
+        "client_insights": "NO_INSIGHTS",
+        "full_client_logs": { "duration": 0, "enabled": true, "throttle": 10 },
+        "learning_log_policy": { "enabled": false },
+        "metrics_realtime_update": { "duration": 0, "enabled": true },
+        "significant_log_throttle": 10,
+        "udf_log_throttle": 10
+      },
+      "analytics_profile_ref": "https://35.164.151.144/api/analyticsprofile/analyticsprofile-708fbaad-3180-49a1-a747-8a2071faa404",
+      "application_profile_ref": "https://35.164.151.144/api/applicationprofile/applicationprofile-fac82667-bb00-4b72-888d-f18302f2fb1b",
+      "bot_policy_ref": "https://35.164.151.144/api/botdetectionpolicy/botdetectionpolicy-12a885d9-89ec-4dd9-a43d-6d60de4e657c",
+      "bulk_sync_kvcache": false,
+      "close_client_conn_on_config_update": false,
+      "cloud_ref": "https://35.164.151.144/api/cloud/cloud-30f0eab3-a7ce-492f-afbf-8ea0f31a1adf",
+      "cloud_type": "CLOUD_AWS",
+      "connections_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "delay_fairness": false,
+      "east_west_placement": false,
+      "enable_autogw": true,
+      "enable_session": false,
+      "enabled": false,
+      "error_page_profile_ref": "https://35.164.151.144/api/errorpageprofile/errorpageprofile-d54d0a61-39e4-449a-81a4-ece1907a1f19",
+      "flow_dist": "LOAD_AWARE",
+      "flow_label_type": "NO_LABEL",
+      "http_policies": [
+        { "http_policy_set_ref": "https://35.164.151.144/api/httppolicyset/httppolicyset-5ae80824-93d4-4d06-af45-9919518fc5cb", "index": 11 }
+      ],
+      "ign_pool_net_reach": false,
+      "limit_doser": false,
+      "marked_for_delete": false,
+      "max_cps_per_client": 0,
+      "name": "saml",
+      "network_profile_ref": "https://35.164.151.144/api/networkprofile/networkprofile-f9e17b91-6fe0-4fcf-8b49-f6ccc4f440f5",
+      "network_security_policy_ref": "https://35.164.151.144/api/networksecuritypolicy/networksecuritypolicy-a67e3857-beea-4eba-bd12-898ef2f89e93",
+      "pool_ref": "https://35.164.151.144/api/pool/pool-b162047b-71f8-4764-928e-14a33eefbf78",
+      "redis_db": 5,
+      "redis_port": 5028,
+      "remove_listening_port_on_vs_down": false,
+      "requests_rate_limit": {
+        "action": { "status_code": "HTTP_LOCAL_RESPONSE_STATUS_CODE_429", "type": "RL_ACTION_NONE" },
+        "explicit_tracking": false,
+        "fine_grain": false
+      },
+      "revoke_vip_route": false,
+      "saml_sp_config": {
+        "acs_index": 0,
+        "authn_req_acs_type": "SAML_AUTHN_REQ_ACS_TYPE_NONE",
+        "cookie_name": "COOKSAML",
+        "cookie_timeout": 60,
+        "entity_id": "avi-saml-aws-avilab",
+        "key": [ { "aes_key": "Cz+3giqDIoiSel3iGfpIt93QhGPAVhC+rU36GGW/J/I=", "name": "a400267e-037b-4806-9128-dfd37a12a54a" } ],
+        "single_signon_url": "https://saml.aws.avilab.top/sso/acs/",
+        "sp_metadata": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<EntityDescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" validUntil=\"2026-07-10T06:56:46.576Z\" entityID=\"avi-saml-aws-avilab\" ID=\"avi-saml-aws-avilab\">\n  <SPSSODescriptor xmlns=\"urn:oasis:names:tc:SAML:2.0:metadata\" protocolSupportEnumeration=\"urn:oasis:names:tc:SAML:2.0:protocol\" AuthnRequestsSigned=\"false\" WantAssertionsSigned=\"true\">\n    <NameIDFormat>urn:oasis:names:tc:SAML:2.0:nameid-format:unspecified</NameIDFormat>\n    <AssertionConsumerService Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST\" Location=\"https://saml.aws.avilab.top/sso/acs/\" index=\"1\"/>\n  </SPSSODescriptor>\n</EntityDescriptor>"
+      },
+      "scaleout_ecmp": false,
+      "se_group_ref": "https://35.164.151.144/api/serviceenginegroup/serviceenginegroup-58d1a678-569c-4dc0-9787-8a07bab2395f",
+      "self_se_election": false,
+      "sideband_profile": { "sideband_max_request_body_size": 1024 },
+      "ssl_sess_cache_avg_size": 1024,
+      "sso_policy_ref": "https://35.164.151.144/api/ssopolicy/ssopolicy-71907bac-0164-4552-b8b0-a215578cca54",
+      "tenant_ref": "https://35.164.151.144/api/tenant/admin",
+      "tls_ticket_key": [
+        { "aes_key": "/T6pYkO3BkhU0+lzIrAxrw==", "hmac_key": "KpMnWci+0t81Blxrkuvz6g==", "name": "6b6e2d64-7971-433b-8cf9-f81c8fe297e2" },
+        { "aes_key": "jx9hJnovexzFRrbt6A1xiA==", "hmac_key": "X43/GRbdPAK+YK7gJXQQvg==", "name": "99a221e6-fe8f-47d5-8e48-b350c3e17640" },
+        { "aes_key": "YHXEmUIoaKx4RvCQeTmzCw==", "hmac_key": "oyv+EXfRjj1WBH1GILD/TA==", "name": "2093945f-d138-48ee-9acd-c5fa227c1436" }
+      ],
+      "traffic_enabled": true,
+      "type": "VS_TYPE_VH_CHILD",
+      "url": "https://35.164.151.144/api/virtualservice/virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+      "use_bridge_ip_as_vip": false,
+      "use_vip_as_snat": false,
+      "uuid": "virtualservice-b96a4ba8-f435-4a1e-8bb1-d86570cff6f5",
+      "version": 8706,
+      "vh_matches": [
+        { "host": "saml.aws.avilab.top", "rules": [ { "matches": { "path": { "match_case": "INSENSITIVE", "match_criteria": "BEGINS_WITH", "match_decoded_string": true, "match_str": [ "/" ] } }, "name": "Rule_1" } ] }
+      ],
+      "vh_parent_vs_ref": "https://35.164.151.144/api/virtualservice/virtualservice-0b9d9329-519e-4110-804f-122e12e92dab",
+      "vh_type": "VS_TYPE_VH_ENHANCED",
+      "vip_runtime": [
+        { "first_se_assigned_time": { "secs": 1773714269, "usecs": 896399 }, "num_additional_se": 0, "requested_resource": { "num_se": 1, "num_standby_se": 0 }, "vip_id": "1" }
+      ],
+      "vrf_context_ref": "https://35.164.151.144/api/vrfcontext/vrfcontext-22e9cbf3-6f05-4caa-9b82-0aa33584b77a",
+      "weight": 1
+    }
+  ]
+};
+/*__AVI_DIAGRAM_DATA_END__*/
+
+/* ---------------------------------------------------------------------
+   2. Build a node tree from the JSON
+--------------------------------------------------------------------- */
+let nextId = 0;
+function leafType(v) {
+  if (v === null) return "null";
+  if (typeof v === "boolean") return "boolean";
+  if (typeof v === "number") return "number";
+  return "string";
+}
+
+function buildNode(label, value, parent, depth, parentPath) {
+  const path = parentPath.concat(label);
+  const node = {
+    id: nextId++,
+    key: label,
+    parent,
+    depth,
+    path,
+    raw: value,
+    children: [],
+    expanded: depth === 0,
+  };
+
+  if (value === null || typeof value !== "object") {
+    node.kind = "leaf";
+    node.value = value;
+    node.leafType = leafType(value);
+    node.leafCount = 1;
+    return node;
+  }
+
+  const isArray = Array.isArray(value);
+  node.kind = isArray ? "array" : "object";
+  if (depth === 0) node.kind = "root";
+  else if (parent && parent.key === "results" && parent.kind === "array" && !isArray) node.kind = "vs";
+
+  if (isArray) {
+    node.childLabel = `${value.length} item${value.length === 1 ? "" : "s"}`;
+    value.forEach((item, i) => {
+      const label2 =
+        item && typeof item === "object" && !Array.isArray(item) && (item.name || item.host)
+          ? item.name || item.host
+          : `#${i + 1}`;
+      node.children.push(buildNode(label2, item, node, depth + 1, path));
+    });
+  } else {
+    const keys = Object.keys(value);
+    node.childLabel = `${keys.length} field${keys.length === 1 ? "" : "s"}`;
+    keys.forEach((k) => node.children.push(buildNode(k, value[k], node, depth + 1, path)));
+  }
+
+  node.leafCount = node.children.reduce((s, c) => s + c.leafCount, 0);
+  return node;
+}
+
+const root = buildNode("API Response", DATA, null, 0, []);
+
+function allContainers(node, out) {
+  if (node.kind !== "leaf") {
+    out.push(node);
+    node.children.forEach((c) => allContainers(c, out));
+  }
+  return out;
+}
+const CONTAINERS = allContainers(root, []);
+
+/* The response envelope carries no information worth a ball: "API Response"
+   only ever holds `count` and `results`, and `results` only holds the virtual
+   services. Both are skipped everywhere — layout, links, search, breadcrumbs —
+   so the virtual services ARE the top level. The nodes still exist in the
+   tree (paths, refs and `raw` subtrees all still resolve through them); they
+   are simply never shown. */
+const RESULTS_NODE = root.children.find((c) => c.key === "results" && c.kind === "array");
+const TOP_NODES = (RESULTS_NODE ? RESULTS_NODE.children : root.children).filter((c) => c.kind !== "leaf");
+const HIDDEN = new Set(RESULTS_NODE ? [root.id, RESULTS_NODE.id] : [root.id]);
+const TOP_DEPTH = TOP_NODES.length ? TOP_NODES[0].depth : 1;
+// how many path segments to drop when showing a path to the user
+const PATH_SKIP = TOP_DEPTH;
+function displayPath(node) { return node.path.slice(PATH_SKIP); }
+
+const TOTAL_LEAVES = TOP_NODES.reduce((s, n) => s + n.leafCount, 0);
+
+function ancestorChain(node) {
+  const chain = [];
+  let n = node;
+  while (n && !HIDDEN.has(n.id)) { chain.unshift(n); n = n.parent; }
+  return chain;
+}
+
+/* ---------------------------------------------------------------------
+   2b. Cross-references — links between different balls whose fields
+   embed the same UUID (shared refs, parent/child VS links, etc.)
+
+   Resolved: the UUID matches an object's own "uuid" field elsewhere in
+   this JSON — a real link to a listed object, drawn straight to it.
+   Unresolved: the UUID doesn't match any listed object's own identity —
+   it points at something outside this dataset (a pool/SE-group/profile/
+   VIP/etc. not included here). EVERY such reference gets its own
+   dedicated "external object" ball, even one referenced by a single
+   ball — nothing is skipped just because it isn't shared.
+
+   Only values shaped like "<type>-<uuid>" (bare, or inside a
+   ".../api/<type>/<type>-<uuid>" URL) are treated as references — this
+   excludes incidental UUID-shaped strings that aren't refs at all, like
+   generated TLS ticket key names or SAML key names, which are bare
+   UUIDs with no type prefix.
+--------------------------------------------------------------------- */
+const REF_RE = /([a-zA-Z][a-zA-Z0-9]*)-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/g;
+
+function ownerOf(node) {
+  let n = node;
+  while (n && n.kind !== "vs" && n.kind !== "root") n = n.parent;
+  return n || root;
+}
+
+function isOwnUuidLeaf(ownerNode, uuid) {
+  return ownerNode.children.some(
+    (c) => c.kind === "leaf" && c.key === "uuid" && typeof c.value === "string" && c.value.includes(uuid)
+  );
+}
+
+const EXTERNAL_NODES = [];
+const EXTERNAL_LINKS = []; // { owner, ext }
+// uuid -> the ball that reference resolves to (a listed object, or the
+// synthetic external ball standing in for one that isn't listed here).
+const REF_TARGET = new Map();
+
+const RESOLVED_PAIRS = (function build() {
+  const uuidInfo = new Map(); // uuid -> Map(owner node -> type prefix)
+  (function walk(node) {
+    if (node.kind === "leaf" && typeof node.value === "string") {
+      const owner = ownerOf(node);
+      for (const m of node.value.matchAll(REF_RE)) {
+        const [, prefix, uuid] = m;
+        if (!uuidInfo.has(uuid)) uuidInfo.set(uuid, new Map());
+        if (!uuidInfo.get(uuid).has(owner)) uuidInfo.get(uuid).set(owner, prefix);
+      }
+    }
+    node.children.forEach(walk);
+  })(root);
+
+  const pairs = new Map(); // "idA|idB" -> { a, b, count }
+  let extCounter = 0;
+  for (const [uuid, ownerMap] of uuidInfo) {
+    const owners = Array.from(ownerMap.keys());
+    const hub = owners.find((o) => isOwnUuidLeaf(o, uuid));
+    if (hub) {
+      REF_TARGET.set(uuid, hub);
+      owners.forEach((o) => {
+        if (o === hub) return;
+        const key = hub.id < o.id ? `${hub.id}|${o.id}` : `${o.id}|${hub.id}`;
+        const existing = pairs.get(key);
+        if (existing) existing.count++;
+        else pairs.set(key, { a: hub, b: o, count: 1 });
+      });
+    } else {
+      const extNode = {
+        id: `ext-${extCounter++}`,
+        kind: "external",
+        key: ownerMap.get(owners[0]),
+        uuid,
+        owners,
+        children: [],
+        expanded: false,
+        leafCount: 0,
+        depth: 1,
+        path: ["external", ownerMap.get(owners[0]), uuid],
+      };
+      EXTERNAL_NODES.push(extNode);
+      REF_TARGET.set(uuid, extNode);
+      owners.forEach((o) => EXTERNAL_LINKS.push({ owner: o, ext: extNode }));
+    }
+  }
+  return Array.from(pairs.values());
+})();
+
+/* ---------------------------------------------------------------------
+   2c. Search index — one entry per ball and per leaf value. Leaves are
+   never drawn as balls, so a leaf hit resolves to its parent ball and
+   the panel flashes the matching field row.
+--------------------------------------------------------------------- */
+const INDEX = [];
+(function buildIndex(node) {
+  if (HIDDEN.has(node.id)) { node.children.forEach(buildIndex); return; }
+  // a leaf hanging directly off the envelope (`count`) has no ball to reveal,
+  // and it only restates the virtual-service count already in the header
+  if (node.kind === "leaf" && node.parent && HIDDEN.has(node.parent.id)) return;
+  if (node.kind === "leaf") {
+    INDEX.push({
+      node,
+      ball: node.parent,
+      isLeaf: true,
+      key: String(node.key),
+      lkey: String(node.key).toLowerCase(),
+      value: node.value === null ? "null" : String(node.value),
+      lvalue: (node.value === null ? "null" : String(node.value)).toLowerCase(),
+      lpath: displayPath(node).join(" / ").toLowerCase(),
+      pathStr: displayPath(node).slice(0, -1).join(" / "),
+      depth: node.depth,
+    });
+  } else {
+    INDEX.push({
+      node,
+      ball: node,
+      isLeaf: false,
+      key: String(node.key),
+      lkey: String(node.key).toLowerCase(),
+      value: node.childLabel || "",
+      lvalue: "",
+      lpath: displayPath(node).join(" / ").toLowerCase(),
+      pathStr: displayPath(node).slice(0, -1).join(" / "),
+      depth: node.depth,
+    });
+    node.children.forEach(buildIndex);
+  }
+})(root);
+EXTERNAL_NODES.forEach((ext) => {
+  INDEX.push({
+    node: ext,
+    ball: ext,
+    isLeaf: false,
+    key: ext.key,
+    lkey: ext.key.toLowerCase(),
+    value: ext.uuid,
+    lvalue: ext.uuid.toLowerCase(),
+    lpath: ("external " + ext.key + " " + ext.uuid).toLowerCase(),
+    pathStr: `not listed · referenced by ${ext.owners.length}`,
+    depth: 1,
+    isExternal: true,
+  });
+});
+
+function scoreEntry(e, q, tokens) {
+  let s = 0;
+  if (e.lkey === q) s = 100;
+  else if (e.lkey.startsWith(q)) s = 74;
+  else if (e.lkey.includes(q)) s = 56;
+  else if (e.lvalue === q) s = 64;
+  else if (e.lvalue.includes(q)) s = 42;
+  else if (e.lpath.includes(q)) s = 22;
+  else if (tokens.length > 1) {
+    const hay = e.lkey + " " + e.lvalue + " " + e.lpath;
+    if (tokens.every((t) => hay.includes(t))) s = 14;
+  }
+  if (!s) return 0;
+  return s - Math.min(8, e.depth); // prefer shallower, more structural hits
+}
+
+const SEARCH_LIMIT = 60;
+function runSearch(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const hits = [];
+  for (const e of INDEX) {
+    const s = scoreEntry(e, q, tokens);
+    if (s > 0) hits.push({ e, s });
+  }
+  hits.sort((a, b) => b.s - a.s || a.e.depth - b.e.depth);
+  return hits.slice(0, SEARCH_LIMIT).map((h) => h.e);
+}
+
+/* ---------------------------------------------------------------------
+   3. Visible set + layout
+--------------------------------------------------------------------- */
+const sim = new Map(); // id -> {x,y,dragging}
+let visibleNodes = [];
+let visibleLinks = [];
+let visibleIdSet = new Set();
+let showXrefs = true;
+let showTree = true;
+let focusMode = false;
+let focusSet = null;         // Set of ids kept bright, or null for "all bright"
+let matchedBallIds = new Set(); // balls carrying a live search hit
+
+function radiusOf(node) {
+  if (node.kind === "root") return 24;
+  if (node.kind === "vs") return 17;
+  if (node.kind === "external") return 9 + Math.min(9, node.owners.length * 1.2);
+  if (node.kind === "leaf") return 6.5;
+  const bump = Math.min(14, Math.sqrt(node.leafCount) * 1.5);
+  return 10 + bump;
+}
+
+function colorOf(node) {
+  switch (node.kind) {
+    case "root": return "var(--text)"; // never drawn — the envelope is hidden
+    case "vs": return "var(--n-vs)";
+    case "object": return "var(--n-object)";
+    case "array": return "var(--n-array)";
+    case "external": return "var(--xref-line-weak)";
+    case "leaf":
+      if (node.leafType === "string") return "var(--n-string)";
+      if (node.leafType === "number") return "var(--n-number)";
+      if (node.leafType === "boolean") return "var(--n-boolean)";
+      return "var(--n-null)";
+  }
+}
+const resolvedColor = (() => {
+  const cache = {};
+  return (varExpr) => {
+    if (cache[varExpr]) return cache[varExpr];
+    const probe = document.createElement("span");
+    probe.style.color = varExpr;
+    document.body.appendChild(probe);
+    const c = getComputedStyle(probe).color;
+    probe.remove();
+    cache[varExpr] = c;
+    return c;
+  };
+})();
+
+function ringRadius(depth) {
+  let r = 0, inc = 100;
+  for (let d = 1; d <= depth; d++) { r += inc; inc += 24; }
+  return r;
+}
+
+const LONE_CHILD_GAP = 100;
+
+function computeRadialLayout() {
+  const place = (node, a0, a1, depth, forcedR) => {
+    const angle = (a0 + a1) / 2;
+    const r = forcedR != null ? forcedR : ringRadius(depth);
+    node.targetX = r * Math.cos(angle);
+    node.targetY = r * Math.sin(angle);
+    const containerChildren = node.children.filter((c) => c.kind !== "leaf");
+    if (node.expanded && containerChildren.length) {
+      const weights = containerChildren.map((c) => Math.sqrt(Math.max(1, c.leafCount)));
+      const total = weights.reduce((s, w) => s + w, 0);
+      const onlyChild = containerChildren.length === 1;
+      let a = a0;
+      containerChildren.forEach((c, i) => {
+        const span = (a1 - a0) * (weights[i] / total);
+        const childR = onlyChild ? r + LONE_CHILD_GAP : ringRadius(depth + 1);
+        place(c, a, a + span, depth + 1, childR);
+        a += span;
+      });
+    }
+  };
+  // The envelope is not drawn, so the virtual services fan around the origin
+  // themselves — at the same ring radius they occupied before, which keeps
+  // every position below them unchanged.
+  const weights = TOP_NODES.map((c) => Math.sqrt(Math.max(1, c.leafCount)));
+  const total = weights.reduce((s, w) => s + w, 0) || 1;
+  let a = 0;
+  TOP_NODES.forEach((c, i) => {
+    const span = Math.PI * 2 * (weights[i] / total);
+    place(c, a, a + span, c.depth, ringRadius(c.depth));
+    a += span;
+  });
+}
+
+// Externals sharing an owner set all resolve to the same centroid, so they
+// would stack on top of it — and on top of the owner ball. Group them by
+// that owner set and spread each group evenly around a ring whose radius
+// grows with the group size, so a VS with a dozen refs gets a readable
+// collar rather than a pile.
+const EXTERNAL_RING = new Map(); // ext.id -> { index, size }
+(function groupExternals() {
+  const groups = new Map();
+  for (const ext of EXTERNAL_NODES) {
+    const key = ext.owners.map((o) => o.id).sort((a, b) => a - b).join(",");
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ext);
+  }
+  for (const list of groups.values()) {
+    list.forEach((ext, i) => EXTERNAL_RING.set(ext.id, { index: i, size: list.length }));
+  }
+})();
+
+function externalCentroid(node) {
+  let sx = 0, sy = 0, n = 0;
+  node.owners.forEach((o) => {
+    if (!visibleIdSet.has(o.id)) return;
+    if (!Number.isFinite(o.targetX) || !Number.isFinite(o.targetY)) return;
+    sx += o.targetX; sy += o.targetY; n++;
+  });
+  if (n === 0) return { x: 0, y: 0 };
+  const ring = EXTERNAL_RING.get(node.id) || { index: 0, size: 1 };
+  const radius = Math.max(76, 30 + ring.size * 5.5);
+  // rotate the collar off-axis so it doesn't sit on the structure links
+  const angle = (ring.index / ring.size) * Math.PI * 2 + 0.6;
+  return { x: sx / n + Math.cos(angle) * radius, y: sy / n + Math.sin(angle) * radius };
+}
+
+// Collars belonging to different owners can still intersect, and an
+// external can land on a structural ball. A few relaxation passes over the
+// external targets only (there are a few dozen, so this is cheap) pushes
+// them apart before the easing animation reads them.
+//
+// Everything here resolves against owners' *target* coords, never their
+// animated sim positions, so the result is deterministic: it is computed
+// once per rebuildVisible() and then eased toward like any other ball,
+// rather than re-relaxed on every frame.
+const RELAX_PASSES = 14;
+
+function updateExternalTargets() {
+  const ext = [];
+  const fixed = [];
+  for (const node of visibleNodes) {
+    if (node.kind === "external") {
+      const c = externalCentroid(node);
+      node.targetX = c.x;
+      node.targetY = c.y;
+      ext.push(node);
+    } else if (typeof node.targetX === "number") {
+      fixed.push(node);
+    }
+  }
+  if (!ext.length) return;
+
+  for (let pass = 0; pass < RELAX_PASSES; pass++) {
+    for (let i = 0; i < ext.length; i++) {
+      const a = ext[i];
+      const ra = radiusOf(a);
+      for (let j = i + 1; j < ext.length; j++) {
+        const b = ext[j];
+        const min = ra + radiusOf(b) + 14;
+        let dx = b.targetX - a.targetX;
+        let dy = b.targetY - a.targetY;
+        let d = Math.hypot(dx, dy);
+        if (d >= min) continue;
+        if (d < 0.001) { dx = Math.cos(i * 2.4); dy = Math.sin(i * 2.4); d = 1; }
+        const push = (min - d) / 2 / d;
+        a.targetX -= dx * push; a.targetY -= dy * push;
+        b.targetX += dx * push; b.targetY += dy * push;
+      }
+      // structural balls hold their radial position; only the external moves
+      for (const f of fixed) {
+        const min = ra + radiusOf(f) + 16;
+        let dx = a.targetX - f.targetX;
+        let dy = a.targetY - f.targetY;
+        let d = Math.hypot(dx, dy);
+        if (d >= min) continue;
+        if (d < 0.001) { dx = Math.cos(i * 2.4); dy = Math.sin(i * 2.4); d = 1; }
+        a.targetX = f.targetX + (dx / d) * min;
+        a.targetY = f.targetY + (dy / d) * min;
+      }
+    }
+  }
+}
+
+function containerChildrenOf(node) {
+  return node.children.filter((c) => c.kind !== "leaf");
+}
+
+function recomputeFocus() {
+  if (!focusMode || !selectedNode || !visibleIdSet.has(selectedNode.id)) {
+    focusSet = null;
+    return;
+  }
+  const keep = new Set();
+  const add = (n) => { if (n) keep.add(n.id); };
+  if (selectedNode.kind === "external") {
+    add(selectedNode);
+    selectedNode.owners.forEach(add);
+  } else {
+    ancestorChain(selectedNode).forEach(add);
+    containerChildrenOf(selectedNode).forEach(add);
+    for (const xr of RESOLVED_PAIRS) {
+      if (xr.a === selectedNode) add(xr.b);
+      if (xr.b === selectedNode) add(xr.a);
+    }
+    for (const l of EXTERNAL_LINKS) {
+      if (l.owner === selectedNode) add(l.ext);
+    }
+  }
+  focusSet = keep;
+}
+
+function rebuildVisible() {
+  visibleNodes = [];
+  visibleLinks = [];
+  const walk = (node) => {
+    visibleNodes.push(node);
+    if (node.expanded) {
+      node.children.forEach((c) => {
+        if (c.kind === "leaf") return;
+        visibleLinks.push({ source: node, target: c });
+        walk(c);
+      });
+    }
+  };
+  TOP_NODES.forEach(walk);
+
+  const treeIdSet = new Set(visibleNodes.map((n) => n.id));
+  if (showXrefs) {
+    EXTERNAL_NODES.forEach((ext) => {
+      if (ext.owners.some((o) => treeIdSet.has(o.id))) visibleNodes.push(ext);
+    });
+  }
+
+  visibleIdSet = new Set(visibleNodes.map((n) => n.id));
+  for (const id of Array.from(sim.keys())) {
+    if (!visibleIdSet.has(id)) sim.delete(id);
+  }
+  for (const node of visibleNodes) {
+    if (!sim.has(node.id)) {
+      if (node.kind === "external") {
+        const c = externalCentroid(node);
+        sim.set(node.id, { x: c.x, y: c.y, dragging: false });
+      } else {
+        const p = node.parent && sim.get(node.parent.id);
+        sim.set(node.id, { x: p ? p.x : 0, y: p ? p.y : 0, dragging: false });
+      }
+    }
+  }
+
+  computeRadialLayout();
+  updateExternalTargets();
+  recomputeFocus();
+
+  document.getElementById("stat-vs").textContent = TOP_NODES.length;
+  document.getElementById("stat-visible").textContent = visibleNodes.length;
+  document.getElementById("stat-leaves").textContent = TOTAL_LEAVES;
+  reheat();
+}
+
+/* ---------------------------------------------------------------------
+   4. Layout settling — nodes ease slowly toward a radial, tree-shaped
+   resting position (children ringed evenly around their parent).
+--------------------------------------------------------------------- */
+const EASE = 0.09;
+const SETTLE_THRESHOLD = 0.35;
+const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let simRunning = false;
+
+function reheat() {
+  if (reducedMotion) {
+    for (const node of visibleNodes) {
+      const p = sim.get(node.id);
+      if (!p.dragging) { p.x = node.targetX; p.y = node.targetY; }
+    }
+    panX = targetPanX;
+    panY = targetPanY;
+    scale = targetScale;
+    render();
+    return;
+  }
+  if (!simRunning) {
+    simRunning = true;
+    requestAnimationFrame(loop);
+  }
+}
+
+function tick() {
+  let maxDelta = 0;
+  for (const node of visibleNodes) {
+    const p = sim.get(node.id);
+    if (p.dragging) continue;
+    const dx = node.targetX - p.x;
+    const dy = node.targetY - p.y;
+    p.x += dx * EASE;
+    p.y += dy * EASE;
+    maxDelta = Math.max(maxDelta, Math.abs(dx), Math.abs(dy));
+  }
+
+  const dpx = targetPanX - panX;
+  const dpy = targetPanY - panY;
+  const dsc = targetScale - scale;
+  panX += dpx * CAMERA_EASE;
+  panY += dpy * CAMERA_EASE;
+  scale += dsc * CAMERA_EASE;
+  const cameraUnsettled = Math.abs(dpx) > 0.3 || Math.abs(dpy) > 0.3 || Math.abs(dsc) > 0.0015;
+
+  return Math.max(maxDelta, cameraUnsettled ? SETTLE_THRESHOLD + 1 : 0);
+}
+
+function loop() {
+  const maxDelta = tick();
+  render();
+  if (maxDelta > SETTLE_THRESHOLD) {
+    requestAnimationFrame(loop);
+  } else {
+    simRunning = false;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   5. Canvas / view transform
+--------------------------------------------------------------------- */
+const canvas = document.getElementById("graph");
+const ctx = canvas.getContext("2d");
+let dpr = window.devicePixelRatio || 1;
+let panX = window.innerWidth / 2;
+let panY = window.innerHeight / 2;
+let scale = 1;
+let targetPanX = panX, targetPanY = panY, targetScale = scale;
+const CAMERA_EASE = 0.1;
+
+function worldToScreen(x, y) { return { x: x * scale + panX, y: y * scale + panY }; }
+function screenToWorld(x, y) { return { x: (x - panX) / scale, y: (y - panY) / scale }; }
+
+function resizeCanvas() {
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", () => { resizeCanvas(); render(); });
+resizeCanvas();
+
+function ballScale() { return Math.max(0.55, Math.min(1.6, scale)); }
+
+function truncateLabel(text, maxChars) {
+  if (text.length <= maxChars) return text;
+  return text.slice(0, maxChars - 1) + "…";
+}
+
+function alphaFor(node) {
+  return focusSet && !focusSet.has(node.id) ? 0.13 : 1;
+}
+
+function render() {
+  const w = window.innerWidth, h = window.innerHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  // subtle dot grid, gives a topology-map feel
+  const gridStep = 42 * Math.min(1.4, Math.max(0.5, scale));
+  ctx.fillStyle = "rgba(180, 196, 226, 0.045)";
+  const offX = panX % gridStep;
+  const offY = panY % gridStep;
+  for (let x = offX; x < w; x += gridStep) {
+    for (let y = offY; y < h; y += gridStep) {
+      ctx.fillRect(x - 0.5, y - 0.5, 1, 1);
+    }
+  }
+
+  // links — the JSON parent/child structure
+  if (showTree) {
+    const lineColor = resolvedColor("var(--link-line)");
+    ctx.lineWidth = Math.max(1, scale);
+    // pass 0 draws the dimmed links, pass 1 the bright ones — with focus off
+    // nothing is dimmed, so the dim pass must be skipped entirely
+    for (const pass of (focusSet ? [0, 1] : [1])) {
+      ctx.strokeStyle = lineColor;
+      ctx.globalAlpha = pass === 0 ? 0.13 : 1;
+      ctx.beginPath();
+      let drew = false;
+      for (const l of visibleLinks) {
+        const dim = alphaFor(l.source) < 1 || alphaFor(l.target) < 1;
+        if ((pass === 0) !== dim) continue;
+        const a = sim.get(l.source.id);
+        const b = sim.get(l.target.id);
+        if (!a || !b) continue;
+        const sa = worldToScreen(a.x, a.y);
+        const sb = worldToScreen(b.x, b.y);
+        ctx.moveTo(sa.x, sa.y);
+        ctx.lineTo(sb.x, sb.y);
+        drew = true;
+      }
+      if (drew) ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // cross-reference links — same UUID appearing under two different balls.
+  // Resolved (orange, denser dash) = a direct link to another object's own
+  // identity, listed in this JSON. Unresolved (grey, sparse dots) = a
+  // spoke out to a dedicated ball standing in for an object that shares
+  // this reference but isn't itself listed in this JSON.
+  if (showXrefs) {
+    const resolvedColorStr = resolvedColor("var(--xref-line)");
+    const weakColorStr = resolvedColor("var(--xref-line-weak)");
+
+    ctx.strokeStyle = resolvedColorStr;
+    ctx.setLineDash([7, 4]);
+    for (const xr of RESOLVED_PAIRS) {
+      if (!visibleIdSet.has(xr.a.id) || !visibleIdSet.has(xr.b.id)) continue;
+      const dim = alphaFor(xr.a) < 1 || alphaFor(xr.b) < 1;
+      ctx.globalAlpha = dim ? 0.1 : 0.7;
+      const a = sim.get(xr.a.id);
+      const b = sim.get(xr.b.id);
+      const sa = worldToScreen(a.x, a.y);
+      const sb = worldToScreen(b.x, b.y);
+      const dx = sb.x - sa.x, dy = sb.y - sa.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const bow = Math.max(16, Math.min(60, dist * 0.14));
+      const mx = (sa.x + sb.x) / 2 - (dy / dist) * bow;
+      const my = (sa.y + sb.y) / 2 + (dx / dist) * bow;
+      ctx.lineWidth = Math.min(4, Math.max(1.1, scale) + (xr.count - 1) * 0.4);
+      ctx.beginPath();
+      ctx.moveTo(sa.x, sa.y);
+      ctx.quadraticCurveTo(mx, my, sb.x, sb.y);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = weakColorStr;
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = Math.max(1, scale * 0.9);
+    for (const pass of (focusSet ? [0, 1] : [1])) {
+      ctx.globalAlpha = pass === 0 ? 0.08 : 0.45;
+      ctx.beginPath();
+      let drew = false;
+      for (const link of EXTERNAL_LINKS) {
+        if (!visibleIdSet.has(link.owner.id) || !visibleIdSet.has(link.ext.id)) continue;
+        const dim = alphaFor(link.owner) < 1 || alphaFor(link.ext) < 1;
+        if ((pass === 0) !== dim) continue;
+        const a = sim.get(link.owner.id);
+        const b = sim.get(link.ext.id);
+        const sa = worldToScreen(a.x, a.y);
+        const sb = worldToScreen(b.x, b.y);
+        ctx.moveTo(sa.x, sa.y);
+        ctx.lineTo(sb.x, sb.y);
+        drew = true;
+      }
+      if (drew) ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.setLineDash([]);
+  }
+
+  // nodes
+  const bs = ballScale();
+  const fontSize = Math.max(9, Math.min(13, 11 * scale));
+  ctx.font = `500 ${fontSize}px "IBM Plex Mono", monospace`;
+  ctx.textBaseline = "middle";
+  const bgColor = resolvedColor("var(--bg)");
+  const accentColor = resolvedColor("var(--accent)");
+  const matchColor = resolvedColor("var(--match)");
+  const labelQueue = [];
+
+  for (const node of visibleNodes) {
+    const p = sim.get(node.id);
+    if (!p) continue;
+    const s = worldToScreen(p.x, p.y);
+    const r = radiusOf(node) * bs;
+    // cheap viewport cull — labels stretch to the right, so pad generously
+    if (s.x < -260 || s.x > w + 60 || s.y < -60 || s.y > h + 60) continue;
+
+    const isHover = node === hoveredNode;
+    const isSelected = node === selectedNode;
+    const isMatch = matchedBallIds.has(node.id);
+    const a = alphaFor(node);
+    ctx.globalAlpha = a;
+
+    if (isSelected) {
+      // soft halo so the selection reads instantly at any zoom
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 11, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(97, 213, 192, 0.11)";
+      ctx.fill();
+    }
+
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+    ctx.fillStyle = resolvedColor(colorOf(node));
+    ctx.fill();
+
+    if (!node.expanded && node.kind !== "external") {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = bgColor;
+      ctx.stroke();
+    }
+
+    if (isMatch) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = matchColor;
+      ctx.globalAlpha = a * 0.9;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 6.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = a;
+    }
+
+    if (isHover || isSelected) {
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = accentColor;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r + 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // collapsed-container child count badge (only counts children that become balls)
+    const containerChildCount = node.children.reduce((n, c) => n + (c.kind !== "leaf" ? 1 : 0), 0);
+    if (!node.expanded && containerChildCount > 0 && r > 5) {
+      ctx.fillStyle = bgColor;
+      ctx.font = `600 ${Math.max(8, fontSize - 2)}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = "center";
+      ctx.fillText(String(containerChildCount), s.x, s.y + 0.5);
+      ctx.font = `500 ${fontSize}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = "left";
+    }
+
+    // Labels are placed in a second pass so important ones win collisions.
+    let priority = 0;
+    if (isSelected || isHover) priority = 100;
+    else if (node.kind === "root" || node.kind === "vs") priority = 80;
+    else if (isMatch) priority = 70;
+    else if (selectedNode && focusSet && focusSet.has(node.id)) priority = 60;
+    else if (node.kind === "external") priority = 20;
+    else priority = 40 + Math.min(19, node.depth ? 19 - node.depth : 19);
+    labelQueue.push({ node, s, r, priority, alpha: a });
+  }
+
+  ctx.globalAlpha = 1;
+  drawLabels(labelQueue, fontSize, w, h);
+}
+
+// Label placement: highest-priority labels claim their box first, and any
+// later label whose box would collide is dropped. Keeps a dense expansion
+// legible instead of stacking dozens of overlapping names.
+function drawLabels(queue, fontSize, w, h) {
+  queue.sort((a, b) => b.priority - a.priority || b.r - a.r);
+  // Seed the occupancy map with every ball, so a label never prints across
+  // a neighbouring ball — the collision test then handles both cases.
+  const placed = queue.map((q) => ({
+    x1: q.s.x - q.r, x2: q.s.x + q.r, y1: q.s.y - q.r, y2: q.s.y + q.r,
+  }));
+  const lineH = fontSize + 5;
+  const overlaps = (box) =>
+    placed.some((q) => !(box.x2 < q.x1 || box.x1 > q.x2 || box.y2 < q.y1 || box.y1 > q.y2));
+
+  for (const item of queue) {
+    const { node, s, r, priority } = item;
+    if (r <= 2.5) continue;
+    if (priority < 60 && fontSize < 9.5 && scale < 0.55) continue; // too small to read anyway
+    const label = truncateLabel(String(node.key), 26);
+    const width = ctx.measureText(label).width;
+    const x1 = s.x + r + 6;
+    const box = { x1, x2: x1 + width, y1: s.y - lineH / 2, y2: s.y + lineH / 2 };
+    if (overlaps(box)) continue;
+    placed.push(box);
+
+    const isPrimary = node.kind === "root" || node.kind === "vs" || priority >= 100;
+    ctx.globalAlpha = item.alpha;
+    if (isPrimary) {
+      // a small plate keeps big labels readable over links
+      ctx.fillStyle = "rgba(7, 11, 20, 0.74)";
+      ctx.fillRect(box.x1 - 4, box.y1, width + 8, lineH);
+    }
+    ctx.fillStyle = resolvedColor(isPrimary ? "var(--text)" : "var(--text-dim)");
+    ctx.textAlign = "left";
+    ctx.fillText(label, x1, s.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------------------------------------------------------------------
+   6. Camera helpers
+--------------------------------------------------------------------- */
+const MIN_BOX = 560; // don't zoom past this much world-space in view
+
+function frameBox(minX, minY, maxX, maxY) {
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  const bw = Math.max(MIN_BOX, maxX - minX);
+  const bh = Math.max(MIN_BOX, maxY - minY);
+  const panelW = detailEl.classList.contains("open") ? Math.min(400, window.innerWidth * 0.92) : 0;
+  const viewW = Math.max(260, window.innerWidth - panelW);
+  const viewH = Math.max(200, window.innerHeight - 80);
+
+  targetScale = Math.max(0.18, Math.min(1.7, Math.min(viewW / bw, viewH / bh)));
+  targetPanX = viewW / 2 - cx * targetScale;
+  targetPanY = window.innerHeight / 2 + 24 - cy * targetScale;
+  reheat();
+}
+
+function focusOn(node) {
+  const kids =
+    node.kind === "external"
+      ? node.owners.filter((o) => visibleIdSet.has(o.id))
+      : node.expanded
+      ? containerChildrenOf(node)
+      : [];
+  const box = [node, ...kids];
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  box.forEach((n) => {
+    const pad = radiusOf(n) + 90;
+    minX = Math.min(minX, n.targetX - pad);
+    maxX = Math.max(maxX, n.targetX + pad);
+    minY = Math.min(minY, n.targetY - pad);
+    maxY = Math.max(maxY, n.targetY + pad);
+  });
+  frameBox(minX, minY, maxX, maxY);
+}
+
+function fitAll() {
+  if (!visibleNodes.length) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of visibleNodes) {
+    const pad = radiusOf(n) + 60;
+    const x = n.targetX, y = n.targetY;
+    if (typeof x !== "number" || typeof y !== "number") continue;
+    minX = Math.min(minX, x - pad);
+    maxX = Math.max(maxX, x + pad);
+    minY = Math.min(minY, y - pad);
+    maxY = Math.max(maxY, y + pad);
+  }
+  if (minX === Infinity) return;
+  frameBox(minX, minY, maxX, maxY);
+}
+
+/* ---------------------------------------------------------------------
+   7. Interaction: pan, zoom, drag, click
+--------------------------------------------------------------------- */
+let hoveredNode = null;
+let selectedNode = null;
+let pointerDownInfo = null;
+let lastClick = { node: null, t: 0 };
+
+function hitTest(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const world = screenToWorld(clientX - rect.left, clientY - rect.top);
+  for (let i = visibleNodes.length - 1; i >= 0; i--) {
+    const node = visibleNodes[i];
+    const p = sim.get(node.id);
+    if (!p) continue;
+    const r = (radiusOf(node) * ballScale()) / scale;
+    const dx = world.x - p.x;
+    const dy = world.y - p.y;
+    if (dx * dx + dy * dy <= (r + 4) * (r + 4)) return node;
+  }
+  return null;
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  const node = hitTest(e.clientX, e.clientY);
+  pointerDownInfo = { node, startX: e.clientX, startY: e.clientY, moved: false, lastX: e.clientX, lastY: e.clientY };
+  if (node) sim.get(node.id).dragging = true;
+  else canvas.classList.add("grabbing");
+  hideTooltip();
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!pointerDownInfo) {
+    const hover = hitTest(e.clientX, e.clientY);
+    if (hover !== hoveredNode) {
+      hoveredNode = hover;
+      canvas.classList.toggle("hovering", !!hover);
+      if (hover) showTooltip(hover, e.clientX, e.clientY);
+      else hideTooltip();
+      render();
+    } else if (hover) {
+      moveTooltip(e.clientX, e.clientY);
+    }
+    return;
+  }
+
+  const dx = e.clientX - pointerDownInfo.lastX;
+  const dy = e.clientY - pointerDownInfo.lastY;
+  const totalMove = Math.hypot(e.clientX - pointerDownInfo.startX, e.clientY - pointerDownInfo.startY);
+  if (totalMove > 4) pointerDownInfo.moved = true;
+  pointerDownInfo.lastX = e.clientX;
+  pointerDownInfo.lastY = e.clientY;
+
+  if (pointerDownInfo.node) {
+    const rect = canvas.getBoundingClientRect();
+    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const p = sim.get(pointerDownInfo.node.id);
+    p.x = world.x;
+    p.y = world.y;
+    render();
+  } else {
+    panX += dx;
+    panY += dy;
+    targetPanX = panX;
+    targetPanY = panY;
+    render();
+  }
+});
+
+function endPointer() {
+  if (!pointerDownInfo) return;
+  const info = pointerDownInfo;
+  pointerDownInfo = null;
+  canvas.classList.remove("grabbing");
+
+  if (!info.node) return;
+  const p = sim.get(info.node.id);
+  if (p) p.dragging = false;
+  if (info.moved) { reheat(); return; }
+
+  const now = performance.now();
+  const isDouble = lastClick.node === info.node && now - lastClick.t < 320;
+  lastClick = { node: info.node, t: now };
+  if (isDouble) collapseNode(info.node);
+  else handleNodeClick(info.node);
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", () => {
+  if (!pointerDownInfo) { hoveredNode = null; canvas.classList.remove("hovering"); hideTooltip(); render(); }
+});
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const before = screenToWorld(mx, my);
+  const factor = Math.exp(-e.deltaY * 0.0016);
+  scale = Math.max(0.12, Math.min(3.2, scale * factor));
+  const after = worldToScreen(before.x, before.y);
+  panX += mx - after.x;
+  panY += my - after.y;
+  targetPanX = panX;
+  targetPanY = panY;
+  targetScale = scale;
+  hideTooltip();
+  render();
+}, { passive: false });
+
+/* Click selects and opens; it only ever expands. Collapsing is its own
+   gesture (double-click, or the − button in the panel) so that clicking
+   an already-open ball to re-read its fields never throws away the
+   subtree you just expanded. */
+function handleNodeClick(node) {
+  selectNode(node);
+  if (!node.expanded && containerChildrenOf(node).length) {
+    node.expanded = true;
+    rebuildVisible();
+  } else {
+    recomputeFocus();
+  }
+  focusOn(node);
+}
+
+function collapseNode(node) {
+  if (node.kind === "external" || !node.expanded) return;
+  node.expanded = false;
+  selectNode(node);
+  rebuildVisible();
+  focusOn(node);
+}
+
+function selectNode(node) {
+  selectedNode = node;
+  showFieldsPanel(node);
+  recomputeFocus();
+  render();
+}
+
+/* Reveal: expanding every ancestor is what makes a ball part of the
+   visible set — and computeRadialLayout() only assigns target coords to
+   descendants of expanded nodes. So ancestors must be expanded, then
+   rebuildVisible() run, before any camera move reads targetX/targetY. */
+function revealNode(node, opts) {
+  const ball = node.kind === "leaf" ? node.parent : node;
+  if (ball.kind === "external") {
+    if (!showXrefs) {
+      showXrefs = true;
+      document.getElementById("btn-xrefs").classList.add("active");
+    }
+    let a = ball.owners[0];
+    while (a) { a.expanded = true; a = a.parent; }
+  } else {
+    let a = ball.parent;
+    while (a) { a.expanded = true; a = a.parent; }
+  }
+  rebuildVisible();
+  selectedNode = ball;
+  showFieldsPanel(ball, opts);
+  recomputeFocus();
+  focusOn(ball);
+  render();
+}
+
+/* ---------------------------------------------------------------------
+   8. Hover tooltip
+--------------------------------------------------------------------- */
+const tooltipEl = document.getElementById("tooltip");
+
+function kindLabel(kind) {
+  return { root: "Response root", vs: "Top-level item", object: "Object", array: "Array", external: "External object", leaf: "Value" }[kind] || kind;
+}
+
+function previewValue(v) {
+  if (v === null) return "null";
+  if (v === "") return "(empty)";
+  const s = String(v);
+  return s.length > 46 ? s.slice(0, 45) + "…" : s;
+}
+
+function showTooltip(node, x, y) {
+  let meta = "";
+  let preview = "";
+  if (node.kind === "external") {
+    meta = `<span>referenced by <b>${node.owners.length}</b></span><span>uuid <b>${escapeHtml(node.uuid.slice(0, 8))}…</b></span>`;
+    preview = `<div class="tt-preview">not listed in this JSON</div>`;
+  } else {
+    const fields = node.children.filter((c) => c.kind === "leaf");
+    const nested = containerChildrenOf(node).length;
+    meta =
+      `<span>fields <b>${fields.length}</b></span>` +
+      `<span>nested <b>${nested}</b></span>` +
+      `<span>values <b>${node.leafCount}</b></span>`;
+    const shown = fields.slice(0, 3)
+      .map((f) => `${escapeHtml(String(f.key))} <span>${escapeHtml(previewValue(f.value))}</span>`)
+      .join("<br />");
+    if (shown) {
+      const more = fields.length > 3 ? `<br />+ ${fields.length - 3} more` : "";
+      preview = `<div class="tt-preview">${shown}${more}</div>`;
+    }
+  }
+  tooltipEl.innerHTML =
+    `<div class="tt-kind"><span class="tt-dot" style="background:${resolvedColor(colorOf(node))}"></span>${kindLabel(node.kind)}</div>` +
+    `<div class="tt-key">${escapeHtml(String(node.key))}</div>` +
+    `<div class="tt-meta">${meta}</div>` + preview;
+  tooltipEl.classList.add("show");
+  moveTooltip(x, y);
+}
+
+function moveTooltip(x, y) {
+  const r = tooltipEl.getBoundingClientRect();
+  let left = x + 16;
+  let top = y + 16;
+  if (left + r.width > window.innerWidth - 12) left = x - r.width - 16;
+  if (top + r.height > window.innerHeight - 12) top = y - r.height - 16;
+  tooltipEl.style.left = Math.max(12, left) + "px";
+  tooltipEl.style.top = Math.max(12, top) + "px";
+}
+
+function hideTooltip() { tooltipEl.classList.remove("show"); }
+
+/* ---------------------------------------------------------------------
+   9. Detail panel
+--------------------------------------------------------------------- */
+const detailEl = document.getElementById("detail");
+const fieldFilterEl = document.getElementById("field-filter");
+let panelNode = null;
+let panelHighlight = "";
+let flashKey = null;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function markHtml(text, needle) {
+  const safe = escapeHtml(text);
+  if (!needle) return safe;
+  const re = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig");
+  return safe.replace(re, (m) => `<mark>${m}</mark>`);
+}
+
+function showFieldsPanel(node, opts) {
+  panelNode = node;
+  panelHighlight = (opts && opts.highlight) || "";
+  flashKey = (opts && opts.flashKey) || null;
+  fieldFilterEl.value = "";
+
+  document.getElementById("detail-type-dot").style.background = resolvedColor(colorOf(node));
+  document.getElementById("detail-type-text").textContent = kindLabel(node.kind);
+  document.getElementById("detail-key").textContent = node.key;
+
+  const toggleBtn = document.getElementById("detail-toggle");
+  const canToggle = node.kind !== "external" && containerChildrenOf(node).length > 0;
+  toggleBtn.style.display = canToggle ? "" : "none";
+  toggleBtn.textContent = node.expanded ? "−" : "+";
+  toggleBtn.title = node.expanded ? "Collapse this ball" : "Expand this ball";
+  document.getElementById("detail-copy").style.display = node.kind === "external" ? "none" : "";
+
+  renderPath(node);
+  renderChildren(node);
+  renderFields(node, "");
+
+  detailEl.classList.add("open");
+  document.body.classList.add("panel-open");
+
+  if (flashKey) {
+    requestAnimationFrame(() => {
+      const row = document.querySelector('.field-row[data-key="' + cssEscape(flashKey) + '"]');
+      if (row) {
+        row.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
+        row.classList.add("flash");
+      }
+    });
+  }
+}
+
+function cssEscape(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+function renderPath(node) {
+  const el = document.getElementById("detail-path");
+  if (node.kind === "external") {
+    el.innerHTML =
+      `<span class="seg">not listed in this JSON</span><span class="sep">›</span><span class="seg last">${escapeHtml(node.uuid)}</span>`;
+    return;
+  }
+  const chain = ancestorChain(node);
+  el.innerHTML = chain
+    .map((n, i) => {
+      const last = i === chain.length - 1;
+      return `<button class="seg${last ? " last" : ""}" data-id="${n.id}"${last ? " disabled" : ""}>${escapeHtml(String(n.key))}</button>`;
+    })
+    .join('<span class="sep">›</span>');
+  el.querySelectorAll("button.seg[data-id]").forEach((b) => {
+    b.addEventListener("click", () => {
+      const target = CONTAINERS.find((c) => String(c.id) === b.dataset.id);
+      if (target) revealNode(target);
+    });
+  });
+}
+
+function renderChildren(node) {
+  const sec = document.getElementById("detail-children-sec");
+  const el = document.getElementById("detail-children");
+  const kids = node.kind === "external" ? [] : containerChildrenOf(node);
+  const list = node.kind === "external" ? node.owners : kids;
+  if (!list.length) { sec.style.display = "none"; return; }
+  sec.style.display = "";
+  sec.querySelector(".field-label").textContent = node.kind === "external" ? "Referenced by" : "Nested balls";
+  el.innerHTML = list
+    .map((c) => {
+      const n = c.kind === "external" ? "" : `<span class="chip-n">${c.leafCount}</span>`;
+      return `<button class="child-chip" data-id="${c.id}">
+        <span class="chip-dot" style="background:${resolvedColor(colorOf(c))}"></span>
+        <span class="chip-name">${escapeHtml(String(c.key))}</span>${n}
+      </button>`;
+    })
+    .join("");
+  el.querySelectorAll("button.child-chip").forEach((b) => {
+    b.addEventListener("click", () => {
+      const target = list.find((c) => String(c.id) === b.dataset.id);
+      if (target) revealNode(target);
+    });
+  });
+}
+
+// A leaf value shaped like a ref becomes a button that jumps to whatever
+// ball that UUID resolves to — a listed object, or the external stand-in.
+function refButtonFor(value, selfNode) {
+  if (typeof value !== "string") return null;
+  REF_RE.lastIndex = 0;
+  const m = REF_RE.exec(value);
+  REF_RE.lastIndex = 0;
+  if (!m) return null;
+  const target = REF_TARGET.get(m[2]);
+  if (!target || target === selfNode || HIDDEN.has(target.id)) return null;
+  const name = target.kind === "external" ? `${target.key} · ${target.uuid.slice(0, 8)}…` : String(target.key);
+  return { targetId: String(target.id), label: `${m[1]} → ${name}` };
+}
+
+function renderFields(node, filter) {
+  const el = document.getElementById("detail-fields");
+  const countEl = document.getElementById("detail-fields-count");
+  const sec = document.getElementById("detail-fields-sec");
+
+  if (node.kind === "external") {
+    sec.style.display = "none";
+    document.getElementById("detail-meta").innerHTML = `
+      <div><span class="field-label">Referenced by</span><span class="v">${node.owners.length} balls</span></div>
+      <div><span class="field-label">Ref type</span><span class="v">${escapeHtml(node.key)}</span></div>
+      <div><span class="field-label">UUID</span><span class="v">${escapeHtml(node.uuid.slice(0, 8))}…</span></div>
+    `;
+    return;
+  }
+  sec.style.display = "";
+
+  const all = node.children.filter((c) => c.kind === "leaf");
+  const f = filter.trim().toLowerCase();
+  const fields = f
+    ? all.filter((c) => String(c.key).toLowerCase().includes(f) || String(c.value).toLowerCase().includes(f))
+    : all;
+
+  fieldFilterEl.style.display = all.length > 8 ? "" : "none";
+  countEl.textContent = f ? `${fields.length} / ${all.length}` : all.length ? String(all.length) : "";
+
+  // written before the early returns below — these counts describe the node,
+  // not the filtered field list, and a ball with no direct fields still needs them
+  document.getElementById("detail-meta").innerHTML = `
+    <div><span class="field-label">Fields</span><span class="v">${all.length}</span></div>
+    <div><span class="field-label">Nested</span><span class="v">${containerChildrenOf(node).length}</span></div>
+    <div><span class="field-label">Values below</span><span class="v">${node.leafCount}</span></div>
+    <div><span class="field-label">Depth</span><span class="v">${node.depth}</span></div>
+  `;
+
+  if (all.length === 0) {
+    el.innerHTML = `<div class="fields-empty">No direct values on this node — open a nested ball to see its fields.</div>`;
+    return;
+  }
+  if (fields.length === 0) {
+    el.innerHTML = `<div class="fields-empty">No field matches “${escapeHtml(filter)}”.</div>`;
+    return;
+  }
+
+  const highlight = f || panelHighlight;
+  el.innerHTML = fields
+    .map((leaf) => {
+      const isEmpty = leaf.value === "" || leaf.value === null;
+      const display = leaf.value === "" ? "(empty string)" : leaf.value === null ? "null" : String(leaf.value);
+      const ref = refButtonFor(leaf.value, node);
+      const valueHtml = ref
+        ? `<button class="ref-link" data-ref="${escapeHtml(ref.targetId)}" title="${escapeHtml(display)}">${escapeHtml(ref.label)}<span class="arrow">↗</span></button>`
+        : `<div class="field-value${isEmpty ? " is-empty" : ""}">${markHtml(display, highlight)}</div>`;
+      return `
+        <div class="field-row" data-key="${escapeHtml(String(leaf.key))}">
+          <div class="field-row-head">
+            <span class="field-dot" style="background:${resolvedColor(colorOf(leaf))}"></span>
+            <span class="field-key">${markHtml(String(leaf.key), highlight)}</span>
+            <button class="copy-btn" data-copy="${escapeHtml(display)}" title="Copy value">copy</button>
+          </div>
+          ${valueHtml}
+        </div>`;
+    })
+    .join("");
+
+  el.querySelectorAll("button.copy-btn").forEach((b) => {
+    b.addEventListener("click", () => copyText(b.dataset.copy, "Value copied"));
+  });
+  el.querySelectorAll("button.ref-link").forEach((b) => {
+    b.addEventListener("click", () => {
+      const id = b.dataset.ref;
+      const target = CONTAINERS.find((c) => String(c.id) === id) || EXTERNAL_NODES.find((c) => String(c.id) === id);
+      if (target) revealNode(target);
+    });
+  });
+
+}
+
+fieldFilterEl.addEventListener("input", () => {
+  if (panelNode) renderFields(panelNode, fieldFilterEl.value);
+});
+
+function closePanel() {
+  detailEl.classList.remove("open");
+  document.body.classList.remove("panel-open");
+  selectedNode = null;
+  panelNode = null;
+  recomputeFocus();
+  render();
+}
+document.getElementById("detail-close").addEventListener("click", closePanel);
+document.getElementById("detail-toggle").addEventListener("click", () => {
+  if (!panelNode) return;
+  if (panelNode.expanded) collapseNode(panelNode);
+  else handleNodeClick(panelNode);
+});
+document.getElementById("detail-copy").addEventListener("click", () => {
+  if (!panelNode) return;
+  copyText(JSON.stringify(panelNode.raw, null, 2), "Subtree JSON copied");
+});
+
+/* ---------------------------------------------------------------------
+   10. Toast + clipboard
+--------------------------------------------------------------------- */
+const toastEl = document.getElementById("toast");
+let toastTimer = null;
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1600);
+}
+function copyText(text, msg) {
+  const done = () => toast(msg);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch (_) { toast("Copy failed"); }
+  ta.remove();
+}
+
+/* ---------------------------------------------------------------------
+   11. Search overlay
+--------------------------------------------------------------------- */
+const searchOverlay = document.getElementById("search-overlay");
+const searchInput = document.getElementById("search-input");
+const searchResults = document.getElementById("search-results");
+const searchCount = document.getElementById("search-count");
+let searchHits = [];
+let searchSel = 0;
+
+function openSearch() {
+  searchOverlay.classList.add("open");
+  searchInput.focus();
+  searchInput.select();
+  updateSearch();
+}
+function closeSearch() {
+  searchOverlay.classList.remove("open");
+  matchedBallIds = new Set();
+  render();
+}
+
+function updateSearch() {
+  const q = searchInput.value;
+  searchHits = runSearch(q);
+  searchSel = 0;
+  matchedBallIds = new Set(searchHits.map((e) => e.ball && e.ball.id).filter((id) => id !== undefined));
+  searchCount.textContent = q.trim()
+    ? `${searchHits.length}${searchHits.length === SEARCH_LIMIT ? "+" : ""} hits`
+    : `${INDEX.length} entries`;
+
+  if (!q.trim()) {
+    searchResults.innerHTML = `<div class="sr-empty">Type to search every key, value and path in the response.</div>`;
+    render();
+    return;
+  }
+  if (!searchHits.length) {
+    searchResults.innerHTML = `<div class="sr-empty">Nothing matches “${escapeHtml(q)}”.</div>`;
+    render();
+    return;
+  }
+  searchResults.innerHTML = searchHits
+    .map((e, i) => {
+      const tag = e.isExternal ? "external" : e.isLeaf ? "field" : kindLabel(e.node.kind).toLowerCase();
+      const detail = e.isLeaf || e.isExternal ? ` <span style="color:var(--text-faint)">= ${escapeHtml(previewValue(e.value))}</span>` : ` <span style="color:var(--text-faint)">${escapeHtml(e.value)}</span>`;
+      return `<div class="sr-row${i === searchSel ? " sel" : ""}" data-i="${i}">
+        <span class="sr-dot" style="background:${resolvedColor(colorOf(e.node))}"></span>
+        <span class="sr-main">
+          <span class="sr-key">${markHtml(e.key, q.trim())}${detail}</span>
+          <span class="sr-path">${escapeHtml(e.pathStr || "top-level item")}</span>
+        </span>
+        <span class="sr-tag">${escapeHtml(tag)}</span>
+      </div>`;
+    })
+    .join("");
+  searchResults.querySelectorAll(".sr-row").forEach((r) => {
+    r.addEventListener("click", () => { searchSel = Number(r.dataset.i); acceptSearch(); });
+  });
+  render();
+}
+
+function moveSearchSel(delta) {
+  if (!searchHits.length) return;
+  searchSel = (searchSel + delta + searchHits.length) % searchHits.length;
+  const rows = searchResults.querySelectorAll(".sr-row");
+  rows.forEach((r, i) => r.classList.toggle("sel", i === searchSel));
+  const sel = rows[searchSel];
+  if (sel) sel.scrollIntoView({ block: "nearest" });
+}
+
+function acceptSearch() {
+  const e = searchHits[searchSel];
+  if (!e) return;
+  const q = searchInput.value.trim();
+  searchOverlay.classList.remove("open");
+  revealNode(e.node, { highlight: q, flashKey: e.isLeaf ? String(e.key) : null });
+}
+
+searchInput.addEventListener("input", updateSearch);
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); moveSearchSel(1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); moveSearchSel(-1); }
+  else if (e.key === "Enter") { e.preventDefault(); acceptSearch(); }
+  else if (e.key === "Escape") { e.preventDefault(); closeSearch(); }
+});
+searchOverlay.addEventListener("pointerdown", (e) => {
+  if (e.target === searchOverlay) closeSearch();
+});
+
+/* ---------------------------------------------------------------------
+   12. Toolbar + keyboard
+--------------------------------------------------------------------- */
+const AUTO_LEVELS = 1; // open each top-level ball one level down
+document.getElementById("btn-search").addEventListener("click", openSearch);
+document.getElementById("btn-depth").addEventListener("click", () => {
+  // Unbounded expand-all buries the view in thousands of balls; one level
+  // below each virtual service is where the structure is still readable.
+  CONTAINERS.forEach((n) => (n.expanded = n.depth < TOP_DEPTH + AUTO_LEVELS));
+  rebuildVisible();
+  fitAll();
+});
+document.getElementById("btn-expand-all").addEventListener("click", () => {
+  // Only containers become balls, so "everything" is a few hundred here, not
+  // the thousands the value count suggests — cheap enough to open in one go.
+  CONTAINERS.forEach((n) => (n.expanded = true));
+  rebuildVisible();
+  fitAll();
+});
+document.getElementById("btn-collapse").addEventListener("click", () => {
+  CONTAINERS.forEach((n) => (n.expanded = false));
+  rebuildVisible();
+  fitAll();
+});
+document.getElementById("btn-fit").addEventListener("click", fitAll);
+document.getElementById("btn-focus").addEventListener("click", (e) => {
+  focusMode = !focusMode;
+  e.currentTarget.classList.toggle("active", focusMode);
+  recomputeFocus();
+  render();
+});
+document.getElementById("btn-xrefs").addEventListener("click", (e) => {
+  showXrefs = !showXrefs;
+  e.currentTarget.classList.toggle("active", showXrefs);
+  rebuildVisible();
+});
+document.getElementById("btn-tree").addEventListener("click", (e) => {
+  showTree = !showTree;
+  e.currentTarget.classList.toggle("active", showTree);
+  render();
+});
+document.getElementById("legend-head").addEventListener("click", () => {
+  document.getElementById("legend").classList.toggle("collapsed");
+});
+
+function siblingStep(node, delta) {
+  if (!node.parent) return null;
+  const sibs = containerChildrenOf(node.parent);
+  const i = sibs.indexOf(node);
+  if (i < 0 || sibs.length < 2) return null;
+  return sibs[(i + delta + sibs.length) % sibs.length];
+}
+
+window.addEventListener("keydown", (e) => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+  const searchOpen = searchOverlay.classList.contains("open");
+
+  if ((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault(); openSearch(); return;
+  }
+  if (!typing && e.key === "/") {
+    e.preventDefault(); openSearch(); return;
+  }
+  if (e.key === "Escape") {
+    if (searchOpen) closeSearch();
+    else if (detailEl.classList.contains("open")) closePanel();
+    return;
+  }
+  if (typing || searchOpen) return;
+
+  if (e.key === "f" || e.key === "F") { e.preventDefault(); fitAll(); return; }
+  if (e.key === "x" || e.key === "X") { document.getElementById("btn-xrefs").click(); return; }
+  if (e.key === "d" || e.key === "D") { document.getElementById("btn-focus").click(); return; }
+
+  if (!selectedNode || selectedNode.kind === "external") return;
+  let next = null;
+  if (e.key === "ArrowUp") {
+    const up = selectedNode.parent;
+    next = up && !HIDDEN.has(up.id) ? up : null;
+  }
+  else if (e.key === "ArrowDown") {
+    const kids = containerChildrenOf(selectedNode);
+    if (kids.length) {
+      if (!selectedNode.expanded) { selectedNode.expanded = true; rebuildVisible(); }
+      next = kids[0];
+    }
+  } else if (e.key === "ArrowLeft") next = siblingStep(selectedNode, -1);
+  else if (e.key === "ArrowRight") next = siblingStep(selectedNode, 1);
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    if (selectedNode.expanded) collapseNode(selectedNode);
+    else handleNodeClick(selectedNode);
+    return;
+  } else return;
+
+  if (next) { e.preventDefault(); revealNode(next); }
+});
+
+/* ---------------------------------------------------------------------
+   13. Go — open the response and its results array so the eight virtual
+   services are on screen from the first frame.
+--------------------------------------------------------------------- */
+rebuildVisible();
+fitAll();
+render();
+</script>
+</body>
+</html>
