@@ -261,7 +261,7 @@ func (c *Client) authenticateSession() error {
 		c.logger.Error("Avi login failed",
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("error_response", string(body)))
-		return fmt.Errorf(errorMsg)
+		return errors.New(errorMsg)
 	}
 
 	// Parse session information from response

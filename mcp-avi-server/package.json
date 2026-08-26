@@ -1,0 +1,21 @@
+{
+  "name": "avi-mcp-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP server exposing the VMware Avi (NSX ALB) Load Balancer REST API as tools",
+  "type": "module",
+  "main": "build/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.19.1",
+    "undici": "^7.2.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "^5.7.3"
+  }
+}

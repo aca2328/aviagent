@@ -16,6 +16,12 @@ services:
       - AVI_TIMEOUT=${AVI_TIMEOUT:-30}
       - AVI_INSECURE=${AVI_INSECURE:-false}
 
+      # Avi MCP server (comprehensive Avi API tool calling; falls back to the
+      # built-in tool set if disabled or unreachable)
+      - AVI_MCP_ENABLED=${AVI_MCP_ENABLED:-true}
+      - AVI_MCP_COMMAND=${AVI_MCP_COMMAND:-node}
+      - AVI_MCP_SERVER_PATH=${AVI_MCP_SERVER_PATH:-}
+
       # LLM Provider Configuration (default to python for better reliability)
       - LLM_PROVIDER=${LLM_PROVIDER:-python}
 

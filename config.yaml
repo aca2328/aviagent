@@ -14,6 +14,11 @@ avi:
   timeout: 30
   insecure: false
 
+mcp:
+  enabled: true
+  command: "node"
+  server_path: "" # empty = auto-detect mcp-avi-server/build/index.js (dev) or /opt/avi-mcp-server/build/index.js (docker)
+
 llm:
   ollama_host: "http://localhost:11434"
   default_model: "llama3.2"

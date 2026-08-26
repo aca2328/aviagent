@@ -22,6 +22,7 @@ import (
 	"aviagent/internal/config"
 	"aviagent/internal/langfuse"
 	"aviagent/internal/llm"
+	"aviagent/internal/mcpavi"
 	"aviagent/internal/python"
 
 	"github.com/gin-gonic/gin"
@@ -72,6 +73,12 @@ type Server struct {
 	aviClientInit sync.Once
 	aviClientErr  error
 	aviClientMu   sync.Mutex
+	// Lazy Avi MCP client initialization (comprehensive tool-calling path;
+	// falls back to the static internal/llm tool set when unavailable). Not a
+	// sync.Once: a failed connect (e.g. bundle not yet built, subprocess died)
+	// must be retryable on the next message, not sticky for the process lifetime.
+	mcpAviClient   *mcpavi.Client
+	mcpAviClientMu sync.Mutex
 	ShutdownContext context.Context
 	// Operation logging for real-time visibility
 	operationLogClients map[string]chan map[string]interface{}
@@ -316,6 +323,40 @@ func (s *Server) getAviClient() (AviClientInterface, error) {
 	defer s.aviClientMu.Unlock()
 
 	return s.aviClient, s.aviClientErr
+}
+
+// getMcpAviClient provides lazy initialization of the Avi MCP client, and
+// returns the existing one once connected. Unlike getAviClient, a failed
+// connection attempt is NOT cached: MCP setup can fail for reasons that
+// resolve without a process restart (bundle not yet built, subprocess briefly
+// down), so every call while unconnected retries rather than staying broken
+// for the process lifetime.
+func (s *Server) getMcpAviClient(ctx context.Context) (*mcpavi.Client, error) {
+	if !s.config.MCP.Enabled {
+		return nil, fmt.Errorf("avi mcp client disabled by config")
+	}
+
+	s.mcpAviClientMu.Lock()
+	defer s.mcpAviClientMu.Unlock()
+
+	if s.mcpAviClient != nil {
+		return s.mcpAviClient, nil
+	}
+
+	client, err := mcpavi.NewClient(&s.config.Avi, &s.config.MCP, s.logger)
+	if err != nil {
+		return nil, fmt.Errorf("avi mcp client setup failed: %w", err)
+	}
+
+	if err := client.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("avi mcp client connection failed: %w", err)
+	}
+
+	s.mcpAviClient = client
+	s.broadcastOperationLog("success", "Avi MCP client connected", map[string]interface{}{
+		"tool_count": len(client.Tools()),
+	})
+	return s.mcpAviClient, nil
 }
 
 // NewServer creates a new web server
@@ -1133,10 +1174,18 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 		convertedHistory = history
 	}
 
-	// Get tool definitions
+	// Get tool definitions: prefer the comprehensive Avi MCP tool set, falling
+	// back to the static Go tool set if MCP is disabled or unreachable.
 	var tools interface{}
 	if s.config.Provider == "ollama" || s.config.Provider == "python" {
-		tools = llm.GetAviToolDefinitions()
+		if mcpClient, err := s.getMcpAviClient(ctx); err == nil {
+			tools = mcpClient.Tools()
+		} else {
+			s.broadcastOperationLog("warning", "Avi MCP client unavailable, using built-in tool set", map[string]interface{}{
+				"error": err.Error(),
+			})
+			tools = llm.GetAviToolDefinitions()
+		}
 	}
 
 	// Process the message with the appropriate LLM client
@@ -1212,14 +1261,29 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	return llmResponse, nil
 }
 
-// executeToolCall executes a tool call against the Avi API
+// executeToolCall executes a tool call against the Avi API. Tool calls whose
+// name matches a tool advertised by the Avi MCP client are routed there;
+// everything else falls back to the built-in Go dispatch below (the static
+// tool set from internal/llm/tools.go, used when MCP is unavailable).
 func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (interface{}, error) {
+	mcpClient, mcpErr := s.getMcpAviClient(ctx)
+	if mcpErr == nil && mcpClient.HasTool(toolCall.Function.Name) {
+		return mcpClient.CallTool(ctx, toolCall.Function.Name, toolCall.Args)
+	}
+	if strings.HasPrefix(toolCall.Function.Name, "avi_") {
+		// This name only ever comes from the MCP tool list (the static
+		// fallback tools use bare names like list_virtual_services), so if we
+		// get here the MCP client is down -- say so instead of falling into
+		// "unknown tool" below, which the model can't self-correct from.
+		return nil, fmt.Errorf("avi mcp tool %s is unavailable: %w", toolCall.Function.Name, mcpErr)
+	}
+
 	// Get Avi client (lazy initialization)
 	aviClient, err := s.getAviClient()
 	if err != nil {
 		return nil, fmt.Errorf("Avi client not available: %w", err)
 	}
-	
+
 	switch toolCall.Function.Name {
 	case "list_virtual_services":
 		params := make(map[string]string)

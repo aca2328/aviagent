@@ -1,6 +1,6 @@
-# Multi-stage build for VMware Avi LLM Agent with Python support
+# Multi-stage build for VMware Avi LLM Agent with Python and MCP support
 # Stage 1: Build Go components
-FROM golang:1.23-alpine AS go-builder
+FROM golang:1.25-alpine AS go-builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates tzdata
@@ -46,14 +46,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 3: Runtime stage
+# Stage 3: Build the Avi MCP server (Node/TypeScript)
+FROM node:20-slim AS node-builder
+
+WORKDIR /app/mcp-avi-server
+
+COPY mcp-avi-server/package.json mcp-avi-server/package-lock.json ./
+RUN npm ci
+
+COPY mcp-avi-server/tsconfig.json ./
+COPY mcp-avi-server/src ./src
+RUN npm run build && npm prune --omit=dev
+
+# Stage 4: Runtime stage
 FROM python:3.11-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies (nodejs/npm run the Avi MCP server as a subprocess)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
     wget \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy from Go builder
@@ -63,13 +77,16 @@ COPY --from=go-builder /app/aviagent /usr/local/bin/aviagent
 COPY --from=python-builder /app/python_mistral /app/python_mistral
 COPY --from=python-builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
+# Copy the built Avi MCP server (matches the fallback path in internal/mcpavi/client.go)
+COPY --from=node-builder /app/mcp-avi-server /opt/avi-mcp-server
+
 # Copy web assets
 COPY web /web
 
 # Set permissions
 RUN chmod +x /usr/local/bin/aviagent \
     && mkdir -p /etc/aviagent \
-    && chown -R 1000:1000 /web /etc/aviagent
+    && chown -R 1000:1000 /web /etc/aviagent /opt/avi-mcp-server
 
 # Create non-root user
 RUN addgroup --gid 1000 appgroup && adduser --uid 1000 --gid 1000 --disabled-password --gecos "" appuser

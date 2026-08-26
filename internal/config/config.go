@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Avi       AviConfig       `mapstructure:"avi"`
+	MCP       MCPConfig       `mapstructure:"mcp"`
 	LLM       LLMConfig       `mapstructure:"llm"`
 	Mistral   MistralConfig   `mapstructure:"mistral"`
 	Langfuse  LangfuseConfig  `mapstructure:"langfuse"`
@@ -37,6 +38,15 @@ type AviConfig struct {
 	Timeout   int    `mapstructure:"timeout"`
 	Insecure  bool   `mapstructure:"insecure"`
 	AuthMethod string `mapstructure:"auth_method"` // "session" or "basic"
+}
+
+// MCPConfig holds configuration for the Avi MCP server the chat pipeline
+// uses for tool calling. When disabled or unreachable, the app falls back to
+// the built-in Go tool set (internal/llm.GetAviToolDefinitions).
+type MCPConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	Command    string `mapstructure:"command"`
+	ServerPath string `mapstructure:"server_path"` // path to mcp-avi-server/build/index.js; empty = auto-detect
 }
 
 // LLMConfig holds Ollama LLM configuration
@@ -90,7 +100,11 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("avi.timeout", 30)
 	viper.SetDefault("avi.insecure", false) // Changed to false for security
 	viper.SetDefault("avi.auth_method", "session") // Default to session-based auth
-	
+
+	viper.SetDefault("mcp.enabled", true)
+	viper.SetDefault("mcp.command", "node")
+	viper.SetDefault("mcp.server_path", "")
+
 	viper.SetDefault("llm.ollama_host", "http://localhost:11434")
 	viper.SetDefault("llm.default_model", "llama3.2")
 	viper.SetDefault("llm.models", []string{"llama3.2", "mistral", "codellama"})
@@ -127,6 +141,10 @@ func Load(configPath string) (*Config, error) {
 	viper.BindEnv("avi.timeout", "AVI_TIMEOUT")
 	viper.BindEnv("avi.insecure", "AVI_INSECURE")
 	viper.BindEnv("avi.auth_method", "AVI_AUTH_METHOD")
+
+	viper.BindEnv("mcp.enabled", "AVI_MCP_ENABLED")
+	viper.BindEnv("mcp.command", "AVI_MCP_COMMAND")
+	viper.BindEnv("mcp.server_path", "AVI_MCP_SERVER_PATH")
 
 	viper.BindEnv("llm.ollama_host", "OLLAMA_HOST")
 	viper.BindEnv("llm.default_model", "OLLAMA_DEFAULT_MODEL")
