@@ -21,7 +21,7 @@ import (
 // Application version
 const (
 	AppName    = "VMware Avi LLM Agent"
-	AppVersion = "1.1.4"
+	AppVersion = "1.1.5"
 	BuildDate  = "2026-01-01"
 )
 

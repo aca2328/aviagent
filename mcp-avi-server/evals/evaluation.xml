@@ -1,0 +1,62 @@
+<evaluation>
+  <!--
+    Avi MCP server evaluation set (mcp-builder skill, Phase 4).
+
+    All 10 answers were verified live against a real Avi Controller
+    (oregon.aws.avilab.eu) via avi_list/avi_get through this MCP server, on
+    2026-08-27. Unlike a "closed" content source (an ended conversation, a
+    shipped release), this is an operational load balancer lab: an admin
+    could add/remove virtual services, pools or servers at any time, which
+    would change some of these answers. Re-verify against the live
+    controller before trusting a failed run as a tool defect rather than a
+    changed environment.
+
+    Run with (requires your own ANTHROPIC_API_KEY):
+      cd mcp-avi-server && npm run build
+      python .claude/skills/mcp-builder/scripts/evaluation.py \
+        -t stdio -c node -a build/index.js \
+        -e AVI_HOST=<host> -e AVI_USERNAME=<user> -e AVI_PASSWORD=<pass> \
+        -e AVI_VERSION=<version> -e AVI_INSECURE=true \
+        -o avi_eval_report.md evals/evaluation.xml
+  -->
+  <qa_pair>
+    <question>On the Avi Controller, the virtual service named 'parent1' is a parent for virtual hosting. How many other virtual services have 'parent1' as their vh_parent_vs_ref (i.e. are its children)?</question>
+    <answer>4</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The virtual service named 'ns1.aws.avilab.eu' load-balances DNS traffic. What single port number is it listening on?</question>
+    <answer>53</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The virtual service named 'parent1' has two service entries, on ports 80 and 443. Which of those two ports has SSL/TLS (enable_ssl) turned on? Answer with just the port number.</question>
+    <answer>443</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the backend pool used by the virtual service named 'store'. What load-balancing algorithm (lb_algorithm) is configured on that pool? Give the exact Avi enum value.</question>
+    <answer>LB_ALGORITHM_LEAST_CONNECTIONS</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the backend pool used by the virtual service named 'werpusUS'. How many health monitors are attached to that pool?</question>
+    <answer>1</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The controller has a system health monitor named 'System-Xternal-Perl'. What is its health monitor type (the exact Avi enum value, e.g. HEALTH_MONITOR_HTTP)?</question>
+    <answer>HEALTH_MONITOR_EXTERNAL</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>The cloud object named 'Default-Cloud' is backed by which infrastructure provider? Give the exact Avi cloud vtype enum value (e.g. CLOUD_VCENTER, CLOUD_AWS, CLOUD_AZURE).</question>
+    <answer>CLOUD_AWS</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>What is the max_se (maximum number of Service Engines) setting on the Service Engine Group named 'Default-Group'?</question>
+    <answer>2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Among the backend pools used by the virtual services 'yesserv', 'store', 'werpusUS' and 'vs-sb2', exactly one currently has zero backend servers configured. What is that pool's name?</question>
+    <answer>vs-sb2-pool</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Three of the controller's virtual services all point at the exact same backend pool (same pool UUID). Name all three virtual services, comma-separated, in alphabetical order.</question>
+    <answer>saml, store, yesserv</answer>
+  </qa_pair>
+</evaluation>
