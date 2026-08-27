@@ -1,0 +1,213 @@
+<title>Avi MCP Server</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<style>
+:root{--bg:#070b14;--panel:#10141d;--panel-2:#171c27;--border:#262c3a;--border-soft:#1a1f2b;--text:#eef1f7;--text-dim:#aab1c2;--text-faint:#6e7688;--teal:#61d5c0;--teal-dim:#1d5347;--blue:#5a8ee4;--amber:#cb8315;--amber-bright:#e2a53e;--rose:#c76d9a;--prose-width:640px;--page-pad:clamp(20px,5vw,64px)}
+*{box-sizing:border-box}
+html{color-scheme:dark}
+body{margin:0;background:#070b14;color:var(--text-dim);font-family:"IBM Plex Sans",sans-serif;font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+h1,h2,h3{color:var(--text);text-wrap:balance;margin:0}
+a{color:var(--teal)}
+a:focus-visible,button:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:2px}
+.kicker{font-family:"IBM Plex Mono",monospace;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--text-faint)}
+.prose{max-width:var(--prose-width)}
+.prose p{margin:0 0 1.1em}
+.prose p:last-child{margin-bottom:0}
+code,.mono{font-family:"IBM Plex Mono",monospace}
+.blk{padding:clamp(48px,8vw,88px) var(--page-pad);border-bottom:1px solid var(--border-soft)}
+.blk-inner{max-width:1080px;margin:0 auto}
+.blk-head{display:flex;flex-direction:column;gap:10px;margin-bottom:36px}
+.blk-head h2{font-family:"IBM Plex Mono",monospace;font-weight:600;font-size:clamp(1.3rem,2.4vw,1.7rem)}
+.hero{padding:clamp(56px,10vw,110px) var(--page-pad) clamp(40px,8vw,72px);background:#070b14 radial-gradient(ellipse 900px 500px at 50% -10%,rgba(97,213,192,.08),transparent 60%);border-bottom:1px solid var(--border-soft)}
+.hero-inner{max-width:820px;margin:0 auto;display:flex;flex-direction:column;align-items:center;text-align:center;gap:22px}
+.hero .kicker{color:var(--teal)}
+.hero h1{font-family:"IBM Plex Mono",monospace;font-weight:700;font-size:clamp(2.2rem,6vw,4rem);line-height:1.08;letter-spacing:-.01em}
+.hero h1 .amber{color:var(--amber-bright)}
+.hero-sub{max-width:600px;font-size:clamp(1rem,1.6vw,1.12rem);color:var(--text-dim)}
+.hero-sub strong{color:var(--text);font-weight:600}
+.hero-links{display:flex;gap:28px;font-family:"IBM Plex Mono",monospace;font-size:.85rem;margin-top:4px;flex-wrap:wrap;justify-content:center}
+.hero-links a{text-decoration:none;border-bottom:1px solid var(--teal-dim);padding-bottom:2px}
+.hero-links a:hover{border-bottom-color:var(--teal)}
+.shape-grid{display:grid;grid-template-columns:minmax(0,var(--prose-width)) minmax(260px,1fr);gap:clamp(28px,5vw,64px);align-items:start}
+.rest-block{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:18px 20px}
+.rest-block .path{color:var(--text-faint)}
+.rest-line{font-family:"IBM Plex Mono",monospace;font-size:.86rem;display:flex;gap:12px;padding:3px 0}
+.verb{width:54px;flex:none;font-weight:600}
+.verb.get{color:var(--teal)}
+.verb.post{color:var(--blue)}
+.verb.put,.verb.patch{color:var(--amber-bright)}
+.verb.delete{color:var(--rose)}
+.rest-note{margin-top:14px;padding-top:14px;border-top:1px solid var(--border-soft);font-family:"IBM Plex Mono",monospace;font-size:.78rem;color:var(--text-faint)}
+.rest-note b{color:var(--text-dim);font-weight:600}
+.tool-groups{display:flex;flex-direction:column;gap:26px}
+.tool-group-label{font-family:"IBM Plex Mono",monospace;font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);margin-bottom:8px}
+.tool-row{display:grid;grid-template-columns:180px 64px 1fr;gap:16px;align-items:baseline;padding:9px 0;border-top:1px solid var(--border-soft)}
+.tool-group:first-child .tool-row:first-child{border-top:none}
+.tool-name{font-family:"IBM Plex Mono",monospace;font-size:.9rem;color:var(--text);font-weight:600}
+.tool-desc{color:var(--text-dim);font-size:.9rem}
+.badge-row{display:flex;gap:4px;flex-wrap:wrap}
+.badge{font-family:"IBM Plex Mono",monospace;font-size:.6rem;padding:2px 6px;border-radius:3px;border:1px solid currentColor;line-height:1.5}
+.badge.get{color:var(--teal)}
+.badge.post{color:var(--blue)}
+.badge.put,.badge.patch{color:var(--amber-bright)}
+.badge.delete{color:var(--rose)}
+.terminal{background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden;max-width:760px}
+.terminal-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border)}
+.tdot{width:9px;height:9px;border-radius:50%;background:var(--border)}
+.terminal-bar .label{margin-left:8px;font-family:"IBM Plex Mono",monospace;font-size:.72rem;color:var(--text-faint)}
+.terminal pre{margin:0;padding:16px 18px;font-family:"IBM Plex Mono",monospace;font-size:.8rem;line-height:1.65;overflow-x:auto;color:var(--text-dim)}
+.terminal .call{color:var(--teal)}
+.terminal .arrow{color:var(--text-faint)}
+.terminal .val{color:var(--text)}
+.terminal .num{color:var(--amber-bright)}
+.proof-note{margin-top:14px;font-family:"IBM Plex Mono",monospace;font-size:.76rem;color:var(--text-faint);max-width:760px}
+.cov-categories{display:flex;flex-direction:column;gap:22px}
+.cov-cat-name{font-family:"IBM Plex Mono",monospace;font-size:.78rem;color:var(--text);margin-bottom:8px}
+.pill-row{display:flex;flex-wrap:wrap;gap:6px}
+.pill{font-family:"IBM Plex Mono",monospace;font-size:.74rem;color:var(--text-dim);background:var(--panel);border:1px solid var(--border);padding:3px 8px;border-radius:4px}
+.cov-total{margin-top:26px;padding-top:20px;border-top:1px solid var(--border-soft);font-family:"IBM Plex Mono",monospace;font-size:.85rem;color:var(--text-dim)}
+.cov-total b{color:var(--amber-bright)}
+.footer{padding:clamp(36px,6vw,56px) var(--page-pad)}
+.footer-inner{max-width:1080px;margin:0 auto;display:flex;justify-content:space-between;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.footer .mono-note{font-family:"IBM Plex Mono",monospace;font-size:.76rem;color:var(--text-faint);max-width:460px}
+@media (max-width:780px){.shape-grid{grid-template-columns:1fr}.tool-row{grid-template-columns:1fr;gap:4px}.badge-row{order:-1}}
+</style>
+
+<div class="hero">
+<div class="hero-inner">
+<div class="kicker">Model Context Protocol server</div>
+<h1>Nine tools.<br><span class="amber">Every Avi object.</span></h1>
+<p class="hero-sub">
+Avi Load Balancer's REST API has <strong>170 object types</strong> &mdash;
+all following the same shape. So this server doesn't ship 170 one-off
+tools. It ships nine generic ones, and reaches all 170.
+</p>
+<div class="hero-links">
+<a href="#shape">how the api shapes up</a>
+<a href="#tools">the nine tools</a>
+<a href="#coverage">full coverage</a>
+</div>
+</div>
+</div>
+
+<div class="blk" id="shape">
+<div class="blk-inner shape-grid">
+<div>
+<div class="blk-head">
+<div class="kicker">Why nine is enough</div>
+<h2>Every object type is the same shape</h2>
+</div>
+<div class="prose">
+<p>
+Pull the Swagger spec off any Avi Controller and the pattern repeats
+170 times: a collection endpoint, an item endpoint, the same five
+verbs on each. <code>Pool</code> works like <code>VirtualService</code>,
+which works like <code>WafPolicy</code>.
+</p>
+<p>
+A generic tool taking an <code>object_type</code> parameter reaches
+all of them &mdash; including types added in the next Avi release.
+</p>
+</div>
+</div>
+<div class="rest-block mono">
+<div class="rest-line"><span class="verb get">GET</span><span class="path">/api/pool[/{uuid}]</span></div>
+<div class="rest-line"><span class="verb post">POST</span><span class="path">/api/pool</span></div>
+<div class="rest-line"><span class="verb put">PUT</span><span class="path">/api/pool/{uuid}</span></div>
+<div class="rest-line"><span class="verb patch">PATCH</span><span class="path">/api/pool/{uuid}</span></div>
+<div class="rest-line"><span class="verb delete">DELETE</span><span class="path">/api/pool/{uuid}</span></div>
+<div class="rest-note">swap <b>pool</b> for any of 170 names &mdash; <b>virtualservice</b>, <b>healthmonitor</b>, <b>sslkeyandcertificate</b> &mdash; same lines, every time.</div>
+</div>
+</div>
+</div>
+
+<div class="blk" id="tools">
+<div class="blk-inner">
+<div class="blk-head">
+<div class="kicker">The vocabulary</div>
+<h2>Nine tools, grouped by what they do</h2>
+</div>
+<div class="tool-groups">
+<div class="tool-group">
+<div class="tool-group-label">Discover</div>
+<div class="tool-row"><div class="tool-name">avi_list_object_types</div><div class="badge-row"><span class="badge get">GET</span></div><div class="tool-desc">Look up the exact object-type name first.</div></div>
+</div>
+<div class="tool-group">
+<div class="tool-group-label">Read</div>
+<div class="tool-row"><div class="tool-name">avi_list</div><div class="badge-row"><span class="badge get">GET</span></div><div class="tool-desc">List objects of one type, with filtering and pagination.</div></div>
+<div class="tool-row"><div class="tool-name">avi_get</div><div class="badge-row"><span class="badge get">GET</span></div><div class="tool-desc">Fetch one object, by UUID or name.</div></div>
+<div class="tool-row"><div class="tool-name">avi_get_analytics</div><div class="badge-row"><span class="badge get">GET</span></div><div class="tool-desc">Pull time-series metrics for a VS, pool, or SE.</div></div>
+</div>
+<div class="tool-group">
+<div class="tool-group-label">Write</div>
+<div class="tool-row"><div class="tool-name">avi_create</div><div class="badge-row"><span class="badge post">POST</span></div><div class="tool-desc">Create a new object of any type.</div></div>
+<div class="tool-row"><div class="tool-name">avi_update</div><div class="badge-row"><span class="badge put">PUT</span></div><div class="tool-desc">Replace an object's full configuration.</div></div>
+<div class="tool-row"><div class="tool-name">avi_patch</div><div class="badge-row"><span class="badge patch">PATCH</span></div><div class="tool-desc">Change specific fields. Leave the rest alone.</div></div>
+<div class="tool-row"><div class="tool-name">avi_delete</div><div class="badge-row"><span class="badge delete">DELETE</span></div><div class="tool-desc">Remove an object. Permanently.</div></div>
+</div>
+<div class="tool-group">
+<div class="tool-group-label">Act</div>
+<div class="tool-row"><div class="tool-name">avi_action</div><div class="badge-row"><span class="badge get">GET</span><span class="badge post">POST</span></div><div class="tool-desc">Run ops CRUD can't: scale, migrate, pull live status.</div></div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="blk">
+<div class="blk-inner">
+<div class="blk-head">
+<div class="kicker">Not simulated</div>
+<h2>Verified against a live controller</h2>
+</div>
+<div class="terminal">
+<div class="terminal-bar">
+<span class="tdot"></span><span class="tdot"></span><span class="tdot"></span>
+<span class="label">session transcript &mdash; avi-mcp-server</span>
+</div>
+<pre><span class="call">avi_list</span>({ object_type: "VirtualService" })
+<span class="arrow">&rarr;</span> <span class="num">8</span> results: <span class="val">parent1, ns1.aws.avilab.eu, vs-sb2, werpusUS, store, yesserv, saml, VS-Demo-2</span>
+
+<span class="call">avi_action</span>({ object_type: "VirtualService", uuid: "...0b9d9329...", action: "runtime" })
+<span class="arrow">&rarr;</span> oper_status.state: <span class="val">OPER_UP</span>  percent_ses_up: <span class="num">100</span></pre>
+</div>
+<p class="proof-note">captured this session, tool call by tool call, against a real Avi Controller &mdash; not a mock.</p>
+</div>
+</div>
+
+<div class="blk" id="coverage">
+<div class="blk-inner">
+<div class="blk-head">
+<div class="kicker">Reference</div>
+<h2>What's reachable</h2>
+</div>
+<div class="cov-categories">
+<div>
+<div class="cov-cat-name">Load Balancing</div>
+<div class="pill-row"><span class="pill">VirtualService</span><span class="pill">Pool</span><span class="pill">PoolGroup</span><span class="pill">VsVip</span></div>
+</div>
+<div>
+<div class="cov-cat-name">Health &amp; Monitoring</div>
+<div class="pill-row"><span class="pill">HealthMonitor</span><span class="pill">HealthScore</span><span class="pill">Alert</span></div>
+</div>
+<div>
+<div class="cov-cat-name">Security</div>
+<div class="pill-row"><span class="pill">SSLKeyAndCertificate</span><span class="pill">WafPolicy</span><span class="pill">AuthProfile</span></div>
+</div>
+<div>
+<div class="cov-cat-name">Networking, Cloud &amp; Admin</div>
+<div class="pill-row"><span class="pill">Network</span><span class="pill">Cloud</span><span class="pill">GslbService</span><span class="pill">Tenant</span></div>
+</div>
+</div>
+<div class="cov-total">all <b>170</b> object types answer to the same nine tools.</div>
+</div>
+</div>
+
+<div class="footer">
+<div class="footer-inner">
+<div class="kicker">avi-mcp-server</div>
+<div class="mono-note">
+TypeScript &middot; <code>@modelcontextprotocol/sdk</code> &middot; stdio transport.
+Authenticates lazily on first call, so the server starts even when
+Avi doesn't.
+</div>
+</div>
+</div>
