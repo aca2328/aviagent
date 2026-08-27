@@ -9,10 +9,8 @@ A Go web server that lets users query/manage a VMware Avi (NSX ALB) Load Balance
 ## Commands
 
 ```bash
-# Build & run
+# Build (compile check only — do not run the resulting binary directly)
 go build -o build/bin/aviagent .          # or: make build
-go run . -config config.yaml              # or: make run-dev
-make run                                  # build then run
 
 # Tests
 go test ./...                             # all tests
@@ -26,11 +24,13 @@ go vet ./...
 make fmt                                  # gofmt + goimports
 make lint                                 # golangci-lint (not installed by default; make setup-dev installs it)
 
-# Docker
+# Run — Docker only
 docker-compose --env-file .env up -d --scale ollama=0   # Mistral/python provider, no Ollama container
 docker-compose --env-file .env up -d                    # Ollama provider, includes Ollama service
 make docker-build / make docker-compose-up
 ```
+
+**Running the app is Docker-only** — never `go run .`, `make run`, `make run-dev`, or execute the compiled binary directly, even for a quick smoke test. Use the commands above (or check if the dev container from `docker-compose --env-file .env up -d ...` is already running before starting another).
 
 `docker-compose up -d` alone reuses the existing image — only `config.yaml` is volume-mounted, so Go/template/static edits need a rebuild: `docker-compose --env-file .env up -d --build`.
 
@@ -69,7 +69,7 @@ Template/static paths are resolved relative to cwd at startup (`internal/web/web
 
 **Config:** `internal/config/config.go` uses Viper — defaults set in code, overridable by `config.yaml` and then environment variables (prefix-less binds like `AVI_HOST`, `MISTRAL_API_KEY`, `LLM_PROVIDER`, etc. — see `Load()` for the full env var list). `avi.host`/`username`/`password` are always required regardless of provider.
 
-`.env` is gitignored and, when present, typically holds real dev credentials plus a `SERVER_PORT` that overrides `config.yaml`'s placeholders (`docker-compose.yml` itself defaults `SERVER_PORT` to 8088, not `config.yaml`'s 8083) — check `.env` before assuming `config.yaml` reflects what's actually running. If testing a scratch local binary alongside the docker dev instance, override the port: `SERVER_PORT=<free-port> ./build/bin/aviagent -config config.yaml`.
+`.env` is gitignored and, when present, typically holds real dev credentials plus a `SERVER_PORT` that overrides `config.yaml`'s placeholders (`docker-compose.yml` itself defaults `SERVER_PORT` to 8088, not `config.yaml`'s 8083) — check `.env` before assuming `config.yaml` reflects what's actually running.
 
 ## Git
 
