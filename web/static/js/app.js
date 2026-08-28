@@ -157,6 +157,7 @@ function initializeDiagramDownload() {
 
 // Simple Log Streaming
 let logPauseState = false;
+let logJsonIdCounter = 0;
 
 function initializeSSELogs() {
     const logsDisplay = document.getElementById('logs-display');
@@ -387,13 +388,31 @@ function createLogElement(logEntry) {
     if (logEntry.payload) {
         const payloadSection = document.createElement('div');
         payloadSection.className = 'log-payload mt-2';
-        
+
+        const payloadId = 'log-json-' + (++logJsonIdCounter);
+
+        const payloadHeader = document.createElement('div');
+        payloadHeader.className = 'd-flex justify-content-between align-items-center mb-1';
+
         const payloadTitle = document.createElement('strong');
         payloadTitle.textContent = 'Payload:';
-        payloadSection.appendChild(payloadTitle);
-        
+
+        const payloadToggle = document.createElement('button');
+        payloadToggle.type = 'button';
+        payloadToggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
+        payloadToggle.setAttribute('data-bs-toggle', 'collapse');
+        payloadToggle.setAttribute('data-bs-target', '#' + payloadId);
+        payloadToggle.setAttribute('aria-expanded', 'false');
+        payloadToggle.setAttribute('aria-controls', payloadId);
+        payloadToggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
+
+        payloadHeader.appendChild(payloadTitle);
+        payloadHeader.appendChild(payloadToggle);
+        payloadSection.appendChild(payloadHeader);
+
         const payloadElement = document.createElement('pre');
-        payloadElement.className = 'log-payload-content';
+        payloadElement.className = 'log-payload-content collapse';
+        payloadElement.id = payloadId;
         try {
             const formattedPayload = JSON.stringify(logEntry.payload, null, 2);
             payloadElement.textContent = formattedPayload;
@@ -474,13 +493,31 @@ function createLogElement(logEntry) {
     if (logEntry.response_payload) {
         const responsePayloadSection = document.createElement('div');
         responsePayloadSection.className = 'log-response-payload mt-2';
-        
+
+        const responsePayloadId = 'log-json-' + (++logJsonIdCounter);
+
+        const responsePayloadHeader = document.createElement('div');
+        responsePayloadHeader.className = 'd-flex justify-content-between align-items-center mb-1';
+
         const responsePayloadTitle = document.createElement('strong');
         responsePayloadTitle.textContent = 'Response Payload:';
-        responsePayloadSection.appendChild(responsePayloadTitle);
-        
+
+        const responsePayloadToggle = document.createElement('button');
+        responsePayloadToggle.type = 'button';
+        responsePayloadToggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
+        responsePayloadToggle.setAttribute('data-bs-toggle', 'collapse');
+        responsePayloadToggle.setAttribute('data-bs-target', '#' + responsePayloadId);
+        responsePayloadToggle.setAttribute('aria-expanded', 'false');
+        responsePayloadToggle.setAttribute('aria-controls', responsePayloadId);
+        responsePayloadToggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
+
+        responsePayloadHeader.appendChild(responsePayloadTitle);
+        responsePayloadHeader.appendChild(responsePayloadToggle);
+        responsePayloadSection.appendChild(responsePayloadHeader);
+
         const responsePayloadElement = document.createElement('pre');
-        responsePayloadElement.className = 'log-payload-content';
+        responsePayloadElement.className = 'log-payload-content collapse';
+        responsePayloadElement.id = responsePayloadId;
         try {
             const formattedPayload = JSON.stringify(logEntry.response_payload, null, 2);
             responsePayloadElement.textContent = formattedPayload;
@@ -507,26 +544,49 @@ function createLogElement(logEntry) {
         for (const [key, value] of Object.entries(logEntry.context)) {
             const detailItem = document.createElement('div');
             detailItem.className = 'log-context-item';
-            
+
             const detailKey = document.createElement('span');
             detailKey.className = 'log-context-key';
             detailKey.textContent = `${key}: `;
-            
-            const detailValue = document.createElement('span');
-            detailValue.className = 'log-context-value';
-            
+            detailItem.appendChild(detailKey);
+
+            let formatted;
             if (typeof value === 'object' && value !== null) {
                 try {
-                    detailValue.textContent = JSON.stringify(value);
+                    formatted = JSON.stringify(value, null, 2);
                 } catch (e) {
-                    detailValue.textContent = String(value);
+                    formatted = String(value);
                 }
             } else {
-                detailValue.textContent = String(value);
+                formatted = String(value);
             }
-            
-            detailItem.appendChild(detailKey);
-            detailItem.appendChild(detailValue);
+
+            // Large values (objects or long strings) get a collapsible block; small ones stay inline.
+            if (formatted.length > 200) {
+                const jsonId = 'log-json-' + (++logJsonIdCounter);
+
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
+                toggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
+                toggle.setAttribute('data-bs-toggle', 'collapse');
+                toggle.setAttribute('data-bs-target', '#' + jsonId);
+                toggle.setAttribute('aria-expanded', 'false');
+                toggle.setAttribute('aria-controls', jsonId);
+                toggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
+                detailItem.appendChild(toggle);
+
+                const pre = document.createElement('pre');
+                pre.className = 'log-payload-content collapse mt-1';
+                pre.id = jsonId;
+                pre.textContent = formatted;
+                detailItem.appendChild(pre);
+            } else {
+                const detailValue = document.createElement('span');
+                detailValue.className = 'log-context-value';
+                detailValue.textContent = formatted;
+                detailItem.appendChild(detailValue);
+            }
+
             contextDetails.appendChild(detailItem);
         }
         
@@ -744,7 +804,9 @@ function initializeEnhancedLogFiltering() {
     const searchInput = document.getElementById('log-search');
     const clearSearchBtn = document.getElementById('clear-search');
     const clearFiltersBtn = document.getElementById('clear-filters');
-    
+    const clearLogsButton = document.getElementById('clear-logs');
+    const logsDisplay = document.getElementById('logs-display');
+
     console.log('Filter elements found:', {
         typeFilter: !!typeFilter,
         levelFilter: !!levelFilter,
@@ -772,7 +834,13 @@ function initializeEnhancedLogFiltering() {
         if (currentEventSource) {
             currentEventSource.close();
         }
-        
+
+        // Clear the current view — the new connection replays full matching
+        // history, so old entries must go or they'd just pile up underneath it.
+        if (logsDisplay) {
+            logsDisplay.innerHTML = '';
+        }
+
         const logType = typeFilter.value;
         const level = levelFilter.value;
         const search = searchInput.value;
@@ -801,6 +869,15 @@ function initializeEnhancedLogFiltering() {
         };
     }
     
+    // Clear logs view (history still replays from the server on the next
+    // filter change or reload — this only clears what's currently shown)
+    if (clearLogsButton && logsDisplay) {
+        clearLogsButton.addEventListener('click', function() {
+            logsDisplay.innerHTML = '';
+            addSystemLog('Logs cleared by user');
+        });
+    }
+
     // Clear search input
     clearSearchBtn.addEventListener('click', function() {
         searchInput.value = '';
