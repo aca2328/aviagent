@@ -6,201 +6,175 @@
     <title>{{.title}}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet">
-    <link href="/static/css/style.css" rel="stylesheet">
+    <link href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link href="/static/css/style.css?v={{.version}}" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
 </head>
 <body>
-    <div class="container-fluid h-100">
-        <div class="row h-100">
-            <!-- Header -->
-            <div class="col-12 app-header">
-                <div class="d-flex justify-content-between align-items-center p-3">
-                    <h3 class="mb-0">
-                        <i class="fas fa-cloud me-2"></i>
-                        VMware Avi LLM Agent
-                        <span class="app-version-badge badge bg-secondary ms-2" title="Build date: {{.buildDate}}">
-                            v<span id="app-version">{{.version}}</span>
-                        </span>
-                        <span id="build-date" class="d-none">{{.buildDate}}</span>
-                    </h3>
-                    <div class="d-flex align-items-center gap-3">
-                        <div class="connection-status">
-                            <div id="connection-indicator" class="d-flex align-items-center">
-                                <div class="status-dot me-2"></div>
-                                <small class="text-muted">Checking connection...</small>
-                            </div>
-                        </div>
-                        <button class="btn btn-outline-secondary btn-sm" id="dark-mode-toggle" title="Toggle Dark Mode">
-                            <i class="fas fa-moon"></i>
-                        </button>
+    <div class="app-shell">
+
+        <!-- Top bar -->
+        <header class="topbar">
+            <div class="topbar-brand">
+                <i class="ph ph-cloud topbar-brand-icon"></i>
+                <span class="topbar-brand-name">Avi Agent</span>
+                <span class="version-chip" title="Build date: {{.buildDate}}">v<span id="app-version">{{.version}}</span></span>
+                <span id="build-date" class="visually-hidden">{{.buildDate}}</span>
+            </div>
+            <div class="topbar-divider"></div>
+            <div class="tenant-pill">
+                <i class="ph ph-buildings"></i>{{.tenant}}<span class="tenant-pill-sep">/ admin</span>
+            </div>
+            <div class="topbar-spacer"></div>
+            <div class="connection-pill" id="connection-indicator">
+                <span class="status-dot"></span>
+                <small>Checking connection…</small>
+            </div>
+            <div class="model-pill">
+                <i class="ph ph-cpu"></i>
+                <select name="model" id="model-select" form="chat-form" aria-label="Model">
+                    {{range .models}}
+                    <option value="{{.}}" {{if eq . $.defaultModel}}selected{{end}}>{{.}}</option>
+                    {{end}}
+                </select>
+                <i class="ph ph-caret-down"></i>
+            </div>
+            <button class="icon-btn" id="settings-btn" aria-label="Settings" title="Settings (coming soon)">
+                <i class="ph ph-gear"></i>
+            </button>
+        </header>
+        <div class="rule"></div>
+
+        <div class="bands">
+
+            <!-- Session rail -->
+            <aside class="rail" id="session-rail">
+                <div class="rail-new-session">
+                    <button class="btn-new-session" id="new-session-btn">
+                        <i class="ph ph-plus"></i>New session
+                    </button>
+                </div>
+                <div class="rail-empty">
+                    <i class="ph ph-clock-counter-clockwise"></i>
+                    <div class="rail-empty-title">No sessions yet</div>
+                    <div class="rail-empty-copy">Your conversations will be listed here and kept for 30 days.</div>
+                </div>
+                <div class="rail-footer">
+                    <i class="ph ph-book-open"></i>What can it do?
+                </div>
+            </aside>
+
+            <!-- Conversation column -->
+            <main class="conversation">
+                <div class="conv-header">
+                    <div class="conv-header-text">
+                        <div class="conv-title" id="conv-title">New session</div>
+                        <div class="conv-meta" id="conv-meta">no messages yet</div>
+                    </div>
+                    <div class="conv-actions">
+                        <button class="btn-outline" id="export-chat"><i class="ph ph-export"></i>Export</button>
+                        <button class="btn-outline" id="clear-chat"><i class="ph ph-trash"></i>Clear</button>
                     </div>
                 </div>
-            </div>
-            
-            <!-- Main Content - Two Column Layout -->
-            <div class="col-12 flex-grow-1 d-flex overflow-hidden">
-                <div class="resizable-container">
-                    <!-- Chat Column (50% by default) -->
-                    <div class="resizable-column chat-column">
-                    <!-- Chat Header -->
-                    <div class="chat-header p-3 border-bottom">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-comments me-2"></i> Chat</h5>
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-outline-secondary btn-sm" id="clear-chat">
-                                    <i class="fas fa-trash"></i> Clear
-                                </button>
-                                <button class="btn btn-outline-info btn-sm" id="export-chat">
-                                    <i class="fas fa-download"></i> Export
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Chat Messages -->
-                    <div class="chat-messages flex-grow-1 overflow-auto p-3" id="chat-messages">
-                        <div class="welcome-message">
-                            <div class="message assistant-message">
-                                <div class="message-header">
-                                    <strong><i class="fas fa-robot"></i> Assistant</strong>
-                                    <span class="timestamp">{{.timestamp}}</span>
+                <div class="rule rule-tight"></div>
+
+                <div class="conv-body" id="chat-messages">
+                    <div class="empty-state" id="empty-state">
+                        <div class="empty-state-kicker">CONNECTED · AVI CONTROLLER</div>
+                        <h1>Ask about your load balancers in plain language.</h1>
+                        <p class="empty-state-lede">The agent reads your Avi controller through {{.toolCount}} tools — virtual services, pools, health monitors, service engines and metrics — and shows every call it makes in the trace panel.</p>
+
+                        <div class="prompt-groups">
+                            <div class="prompt-group">
+                                <div class="prompt-group-label">INVENTORY</div>
+                                <div class="prompt-row">
+                                    <button type="button" class="prompt-btn" data-prompt="List all virtual services"><i class="ph ph-list-magnifying-glass"></i>List all virtual services</button>
+                                    <button type="button" class="prompt-btn" data-prompt="Which pools have no health monitor?"><i class="ph ph-pulse"></i>Which pools have no health monitor?</button>
+                                    <button type="button" class="prompt-btn" data-prompt="Show SE groups and their capacity"><i class="ph ph-hard-drives"></i>Show SE groups and their capacity</button>
                                 </div>
-                                <div class="message-content">
-                                    <p>Hello! I'm your VMware Avi Load Balancer assistant. I can help you manage and monitor your load balancer infrastructure using natural language.</p>
-                                    
-                                    <p><strong>Example queries:</strong></p>
-                                    <ul>
-                                        <li>"List all virtual services"</li>
-                                        <li>"Show me pools with health issues"</li>
-                                        <li>"Get performance metrics for the last hour"</li>
-                                    </ul>
+                            </div>
+                            <div class="prompt-group">
+                                <div class="prompt-group-label">TROUBLESHOOTING</div>
+                                <div class="prompt-row">
+                                    <button type="button" class="prompt-btn" data-prompt="Show me pools with health issues"><i class="ph ph-warning-circle"></i>Show me pools with health issues</button>
+                                    <button type="button" class="prompt-btn" data-prompt="Performance metrics for the last hour"><i class="ph ph-chart-line"></i>Performance metrics for the last hour</button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                    
-                    <!-- Chat Input -->
-                    <div class="chat-input p-3 border-top">
-                        <form hx-post="/htmx/chat" 
-                              hx-target="#chat-messages" 
+                </div>
+
+                <div class="composer">
+                    <div class="composer-field" id="composer-field">
+                        <form hx-post="/htmx/chat"
+                              hx-target="#chat-messages"
                               hx-swap="beforeend"
                               hx-include="[name='model']"
                               hx-indicator="#loading-indicator"
                               id="chat-form">
-                            <div class="input-group">
-                                <input type="text" 
-                                       class="form-control" 
-                                       name="message" 
-                                       id="message-input"
-                                       placeholder="Ask about your Avi Load Balancer..."
-                                       autocomplete="off"
-                                       required>
-                                <button class="btn btn-primary" type="submit" id="send-button">
-                                    <i class="fas fa-paper-plane"></i>
+                            <input type="text"
+                                   name="message"
+                                   id="message-input"
+                                   class="composer-input"
+                                   placeholder="Ask about virtual services, pools, health monitors, SE groups…"
+                                   autocomplete="off"
+                                   required>
+                            <div class="composer-controls">
+                                <button type="button" class="btn-outline btn-outline-sm" id="add-context-btn" title="Coming soon">
+                                    <i class="ph ph-at"></i>Add object context
+                                </button>
+                                <div class="composer-spacer"></div>
+                                <span class="composer-hint">⏎ send · ⇧⏎ newline</span>
+                                <button type="submit" class="send-btn" id="send-button" aria-label="Send" form="chat-form">
+                                    <i class="ph ph-paper-plane-right"></i>
                                 </button>
                             </div>
                         </form>
-                        
-                        <!-- Loading indicator -->
-                        <div id="loading-indicator" class="htmx-indicator mt-2">
-                            <div class="d-flex align-items-center">
-                                <div class="spinner-border spinner-border-sm me-2" role="status">
-                                    <span class="visually-hidden">Loading...</span>
-                                </div>
-                                <span class="text-muted small">Processing your request...</span>
-                            </div>
+                        <div id="loading-indicator" class="htmx-indicator composer-loading">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                            <span>Processing your request…</span>
                         </div>
                     </div>
                 </div>
+            </main>
 
-                <!-- Resize Handle -->
-                <div class="resize-handle" id="column-resize-handle"></div>
-
-                <!-- Logs Column (50% by default) -->
-                <div class="resizable-column logs-column">
-                    <div class="d-flex flex-column h-100">
-                        <!-- Logs Header -->
-                        <div class="logs-header p-3 border-bottom">
-                            <h5 class="mb-0"><i class="fas fa-stream me-2"></i> API Logs</h5>
-                            
-                            <!-- Enhanced Filter Controls -->
-                            <div class="mt-2">
-                                <div class="d-flex gap-2 mb-2">
-                                    <select id="log-type-filter" class="form-select form-select-sm flex-grow-1">
-                                        <option value="all">All Types</option>
-                                        <option value="mistral">Mistral</option>
-                                        <option value="avi">Avi</option>
-                                        <option value="user">User</option>
-                                        <option value="system">System</option>
-                                    </select>
-                                    <select id="log-level-filter" class="form-select form-select-sm">
-                                        <option value="all">All Levels</option>
-                                        <option value="info">Info</option>
-                                        <option value="warn">Warning</option>
-                                        <option value="error">Error</option>
-                                        <option value="debug">Debug</option>
-                                    </select>
-                                    <div class="input-group input-group-sm flex-grow-1">
-                                        <input type="text" id="log-search" class="form-control" placeholder="Search..." aria-label="Search logs">
-                                        <button class="btn btn-outline-secondary" type="button" id="clear-search">
-                                            <i class="fas fa-times"></i>
-                                        </button>
-                                    </div>
-                                    <button class="btn btn-sm btn-outline-secondary" id="clear-filters">
-                                        <i class="fas fa-filter-circle-x"></i>
-                                    </button>
-                                </div>
-                                
-                                <!-- Legacy Checkbox Filters (keep for backward compatibility) -->
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" id="show-mistral" checked>
-                                    <label class="form-check-label small" for="show-mistral">Mistral</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" id="show-avi" checked>
-                                    <label class="form-check-label small" for="show-avi">Avi</label>
-                                </div>
-                                <div class="form-check form-check-inline">
-                                    <input class="form-check-input" type="checkbox" id="show-system" checked>
-                                    <label class="form-check-label small" for="show-system">System</label>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Logs Display -->
-                        <div class="logs-display flex-grow-1 overflow-auto p-3" id="logs-display">
-                            <div class="log-entry system-log">
-                                <div class="log-header">
-                                    <span class="log-type-badge badge bg-secondary">SYSTEM</span>
-                                    <span class="log-timestamp small text-muted">{{.timestamp}}</span>
-                                </div>
-                                <div class="log-content">
-                                    Waiting for API activity...
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Logs Controls -->
-                        <div class="logs-controls p-2 border-top">
-                            <div class="d-flex gap-2">
-                                <button class="btn btn-sm btn-outline-secondary flex-grow-1" id="clear-logs">
-                                    <i class="fas fa-trash"></i> Clear Logs
-                                </button>
-                                <button class="btn btn-sm btn-outline-secondary" id="pause-logs">
-                                    <i class="fas fa-pause"></i>
-                                </button>
-                                <a href="/api/logs" target="_blank" class="btn btn-sm btn-outline-info" id="view-all-logs" title="View complete logs">
-                                    <i class="fas fa-external-link-alt"></i>
-                                </a>
-                            </div>
-                        </div>
+            <!-- Trace inspector -->
+            <aside class="inspector" id="inspector">
+                <div class="inspector-header">
+                    <i class="ph ph-git-branch"></i>
+                    <span class="inspector-title">Trace</span>
+                    <div class="inspector-spacer"></div>
+                    <button class="icon-btn icon-btn-sm" id="pause-logs" aria-label="Pause stream" title="Pause stream"><i class="ph ph-pause"></i></button>
+                    <a class="icon-btn icon-btn-sm" id="view-all-logs" href="/api/logs" target="_blank" aria-label="Download logs" title="View complete logs"><i class="ph ph-download-simple"></i></a>
+                </div>
+                <div class="inspector-filters">
+                    <div class="trace-seg" id="trace-type-seg">
+                        <button type="button" class="trace-seg-opt is-active" data-type="all" data-level="all">All</button>
+                        <button type="button" class="trace-seg-opt" data-type="mistral" data-level="all">LLM</button>
+                        <button type="button" class="trace-seg-opt" data-type="avi" data-level="all">Avi</button>
+                        <button type="button" class="trace-seg-opt" data-type="all" data-level="error">Errors</button>
+                    </div>
+                    <div class="trace-search">
+                        <i class="ph ph-magnifying-glass"></i>
+                        <input type="text" id="log-search" placeholder="Search this session" aria-label="Search this session">
+                        <button type="button" id="clear-search" aria-label="Clear search"><i class="ph ph-x"></i></button>
                     </div>
                 </div>
-            </div>
+                <div class="rule rule-tight rule-narrow"></div>
+
+                <div class="inspector-steps" id="logs-display"></div>
+
+                <div class="inspector-footer">
+                    <span class="status-dot" id="trace-status-dot"></span>
+                    <span class="mono" id="trace-status-text">Idle · stream connected</span>
+                    <div class="inspector-spacer"></div>
+                    <button type="button" class="btn-link" id="clear-logs">Clear</button>
+                </div>
+            </aside>
+
         </div>
     </div>
-</div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/app.js"></script>

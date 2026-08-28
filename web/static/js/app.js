@@ -1,69 +1,3 @@
-// Dark Mode Toggle Functionality
-function initializeDarkModeToggle() {
-    const darkModeToggle = document.getElementById('dark-mode-toggle');
-    const htmlElement = document.documentElement;
-    
-    if (!darkModeToggle) {
-        console.warn('Dark mode toggle button not found');
-        return;
-    }
-    
-    // Check for saved preference or use system preference
-    const savedPreference = localStorage.getItem('darkModePreference');
-    const prefersDarkMode = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    
-    // Determine initial state
-    let isDarkMode;
-    if (savedPreference === 'dark') {
-        isDarkMode = true;
-    } else if (savedPreference === 'light') {
-        isDarkMode = false;
-    } else {
-        // Use system preference if no saved preference
-        isDarkMode = prefersDarkMode;
-    }
-    
-    // Apply initial state
-    updateDarkMode(isDarkMode);
-    
-    // Add click event listener
-    darkModeToggle.addEventListener('click', function() {
-        isDarkMode = !isDarkMode;
-        updateDarkMode(isDarkMode);
-        saveDarkModePreference(isDarkMode);
-    });
-    
-    // Listen for system preference changes
-    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
-        // Only update if we're using system preference (no saved preference)
-        if (!localStorage.getItem('darkModePreference')) {
-            updateDarkMode(e.matches);
-        }
-    });
-}
-
-function updateDarkMode(isDarkMode) {
-    const darkModeToggle = document.getElementById('dark-mode-toggle');
-    const htmlElement = document.documentElement;
-    
-    if (isDarkMode) {
-        htmlElement.setAttribute('data-color-scheme', 'dark');
-        darkModeToggle.classList.add('dark-mode-active');
-        darkModeToggle.setAttribute('title', 'Switch to Light Mode');
-        darkModeToggle.innerHTML = '<i class="fas fa-sun"></i>';
-    } else {
-        htmlElement.setAttribute('data-color-scheme', 'light');
-        darkModeToggle.classList.remove('dark-mode-active');
-        darkModeToggle.setAttribute('title', 'Switch to Dark Mode');
-        darkModeToggle.innerHTML = '<i class="fas fa-moon"></i>';
-    }
-}
-
-function saveDarkModePreference(isDarkMode) {
-    const preference = isDarkMode ? 'dark' : 'light';
-    localStorage.setItem('darkModePreference', preference);
-}
-
 // Function to display version information
 function displayVersionInfo() {
     fetch('/api/health')
@@ -155,141 +89,44 @@ function initializeDiagramDownload() {
     });
 }
 
-// Simple Log Streaming
+// Trace (API log) streaming
 let logPauseState = false;
 let logJsonIdCounter = 0;
-
-function initializeSSELogs() {
-    const logsDisplay = document.getElementById('logs-display');
-    const pauseLogsButton = document.getElementById('pause-logs');
-    const clearLogsButton = document.getElementById('clear-logs');
-    
-    if (!logsDisplay) return;
-    
-    // Start simple log streaming
-    startLogStreaming();
-    
-    // Pause/Resume logs button
-    if (pauseLogsButton) {
-        pauseLogsButton.addEventListener('click', function() {
-            logPauseState = !logPauseState;
-            const icon = pauseLogsButton.querySelector('i');
-            
-            if (logPauseState) {
-                icon.classList.remove('fa-pause');
-                icon.classList.add('fa-play');
-                pauseLogsButton.setAttribute('title', 'Resume logs');
-            } else {
-                icon.classList.remove('fa-play');
-                icon.classList.add('fa-pause');
-                pauseLogsButton.setAttribute('title', 'Pause logs');
-            }
-        });
-    }
-    
-    // Clear logs button
-    if (clearLogsButton) {
-        clearLogsButton.addEventListener('click', function() {
-            if (confirm('Are you sure you want to clear all logs?')) {
-                logsDisplay.innerHTML = '';
-                addSystemLog('Logs cleared by user');
-            }
-        });
-    }
-    
-    // Log filtering
-    setupLogFiltering();
-}
-
-// Simple log streaming - just fetch and display logs periodically
-function startLogStreaming() {
-    // Fetch logs every 2 seconds
-    setInterval(fetchLogs, 2000);
-}
-
-function fetchLogs() {
-    if (logPauseState) return;
-    
-    // Fetch logs from server
-    fetch('/api/logs')
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Failed to fetch logs');
-            }
-            return response.json();
-        })
-        .then(logs => {
-            // Process and display logs
-            logs.forEach(logEntry => {
-                processLogEntry(logEntry);
-            });
-        })
-        .catch(error => {
-            console.error('Error fetching logs:', error);
-        });
-}
 
 function processLogEntry(logEntry) {
     const logsDisplay = document.getElementById('logs-display');
     if (!logsDisplay) return;
-    
-    // Check if log should be displayed based on filters
-    if (shouldDisplayLog(logEntry)) {
-        const logElement = createLogElement(logEntry);
-        logsDisplay.appendChild(logElement);
-        
-        // Auto-scroll to bottom
-        setTimeout(() => {
-            logsDisplay.scrollTop = logsDisplay.scrollHeight;
-        }, 50);
-    }
+
+    if (!shouldDisplayLog(logEntry)) return;
+
+    const logElement = createLogElement(logEntry);
+    logsDisplay.appendChild(logElement);
+
+    setTimeout(() => {
+        logsDisplay.scrollTop = logsDisplay.scrollHeight;
+    }, 50);
 }
 
+// Suppresses health-check noise from the trace stream — /health is polled
+// every 30s by checkConnectionStatus and isn't useful to show as a step.
 function shouldDisplayLog(logEntry) {
-    // First, filter out health check logs
-    if (logEntry.message && logEntry.message.includes("Health check requested")) {
+    if (logEntry.message && logEntry.message.includes('Health check requested')) {
         return false;
     }
-    
-    if (logEntry.endpoint === "/health") {
+    if (logEntry.endpoint === '/health') {
         return false;
     }
-    
-    // Check filter checkboxes
-    const showMistral = document.getElementById('show-mistral')?.checked || true;
-    const showAvi = document.getElementById('show-avi')?.checked || true;
-    const showSystem = document.getElementById('show-system')?.checked || true;
-    
-    const logType = logEntry.type;
-    
-    if (logType === 'mistral_request' || logType === 'mistral_response') {
-        return showMistral;
-    } else if (logType === 'avi_request' || logType === 'avi_response') {
-        return showAvi;
-    } else {
-        return showSystem;
-    }
-}
-
-function setupLogFiltering() {
-    const filterCheckboxes = document.querySelectorAll('#logs-header input[type="checkbox"]');
-    
-    filterCheckboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', function() {
-            // When filters change, we could re-filter existing logs
-            // For now, just let new logs be filtered
-        });
-    });
+    return true;
 }
 
 function createLogElement(logEntry) {
     const logElement = document.createElement('div');
-    
+
     // Determine log type and class
     let logTypeClass = 'system-log';
     let logTypeText = 'SYSTEM';
     let logIcon = 'fa-info-circle';
-    
+
     switch(logEntry.type) {
         case 'mistral_request':
             logTypeClass = 'mistral-request';
@@ -331,28 +168,28 @@ function createLogElement(logEntry) {
             logTypeText = 'SYSTEM';
             logIcon = 'fa-info-circle';
     }
-    
+
     logElement.className = 'log-entry ' + logTypeClass;
-    
+
     // Create log header
     const logHeader = document.createElement('div');
     logHeader.className = 'log-header';
-    
+
     const logTypeBadge = document.createElement('span');
     logTypeBadge.className = 'log-type-badge badge bg-secondary';
     logTypeBadge.innerHTML = `<i class="fas ${logIcon}"></i> ${logTypeText}`;
-    
+
     const logTimestamp = document.createElement('span');
     logTimestamp.className = 'log-timestamp small text-muted';
     logTimestamp.textContent = logEntry.timestamp || new Date().toISOString();
-    
+
     logHeader.appendChild(logTypeBadge);
-    
+
     // Add status code for response logs
     if (logEntry.status_code) {
         const statusBadge = document.createElement('span');
         statusBadge.className = 'log-status-badge badge ms-2';
-        
+
         const statusCode = logEntry.status_code;
         if (statusCode >= 200 && statusCode < 300) {
             statusBadge.classList.add('bg-success');
@@ -365,17 +202,17 @@ function createLogElement(logEntry) {
         } else {
             statusBadge.classList.add('bg-secondary');
         }
-        
+
         statusBadge.textContent = statusCode;
         logHeader.appendChild(statusBadge);
     }
-    
+
     logHeader.appendChild(logTimestamp);
-    
+
     // Create log content
     const logContent = document.createElement('div');
     logContent.className = 'log-content';
-    
+
     // Main message
     if (logEntry.message) {
         const messageElement = document.createElement('div');
@@ -383,7 +220,7 @@ function createLogElement(logEntry) {
         messageElement.textContent = logEntry.message;
         logContent.appendChild(messageElement);
     }
-    
+
     // Add payload if available
     if (logEntry.payload) {
         const payloadSection = document.createElement('div');
@@ -422,73 +259,73 @@ function createLogElement(logEntry) {
         payloadSection.appendChild(payloadElement);
         logContent.appendChild(payloadSection);
     }
-    
+
     // Add headers if available
     if (logEntry.headers) {
         const headersSection = document.createElement('div');
         headersSection.className = 'log-headers mt-2';
-        
+
         const headersTitle = document.createElement('strong');
         headersTitle.textContent = 'Request Headers:';
         headersSection.appendChild(headersTitle);
-        
+
         const headersDetails = document.createElement('div');
         headersDetails.className = 'log-headers-details';
-        
+
         for (const [key, value] of Object.entries(logEntry.headers)) {
             const headerItem = document.createElement('div');
             headerItem.className = 'log-header-item';
-            
+
             const headerKey = document.createElement('span');
             headerKey.className = 'log-header-key';
             headerKey.textContent = `${key}: `;
-            
+
             const headerValue = document.createElement('span');
             headerValue.className = 'log-header-value';
             headerValue.textContent = String(value);
-            
+
             headerItem.appendChild(headerKey);
             headerItem.appendChild(headerValue);
             headersDetails.appendChild(headerItem);
         }
-        
+
         headersSection.appendChild(headersDetails);
         logContent.appendChild(headersSection);
     }
-    
+
     // Add response headers if available
     if (logEntry.response_headers) {
         const responseHeadersSection = document.createElement('div');
         responseHeadersSection.className = 'log-response-headers mt-2';
-        
+
         const responseHeadersTitle = document.createElement('strong');
         responseHeadersTitle.textContent = 'Response Headers:';
         responseHeadersSection.appendChild(responseHeadersTitle);
-        
+
         const responseHeadersDetails = document.createElement('div');
         responseHeadersDetails.className = 'log-headers-details';
-        
+
         for (const [key, value] of Object.entries(logEntry.response_headers)) {
             const headerItem = document.createElement('div');
             headerItem.className = 'log-header-item';
-            
+
             const headerKey = document.createElement('span');
             headerKey.className = 'log-header-key';
             headerKey.textContent = `${key}: `;
-            
+
             const headerValue = document.createElement('span');
             headerValue.className = 'log-header-value';
             headerValue.textContent = String(value);
-            
+
             headerItem.appendChild(headerKey);
             headerItem.appendChild(headerValue);
             responseHeadersDetails.appendChild(headerItem);
         }
-        
+
         responseHeadersSection.appendChild(responseHeadersDetails);
         logContent.appendChild(responseHeadersSection);
     }
-    
+
     // Add response payload if available
     if (logEntry.response_payload) {
         const responsePayloadSection = document.createElement('div');
@@ -527,19 +364,19 @@ function createLogElement(logEntry) {
         responsePayloadSection.appendChild(responsePayloadElement);
         logContent.appendChild(responsePayloadSection);
     }
-    
+
     // Add context if available - display as structured details
     if (logEntry.context && Object.keys(logEntry.context).length > 0) {
         const contextSection = document.createElement('div');
         contextSection.className = 'log-context mt-2';
-        
+
         const contextTitle = document.createElement('strong');
         contextTitle.textContent = 'Details:';
         contextSection.appendChild(contextTitle);
-        
+
         const contextDetails = document.createElement('div');
         contextDetails.className = 'log-context-details';
-        
+
         // Display context as key-value pairs for better readability
         for (const [key, value] of Object.entries(logEntry.context)) {
             const detailItem = document.createElement('div');
@@ -589,23 +426,23 @@ function createLogElement(logEntry) {
 
             contextDetails.appendChild(detailItem);
         }
-        
+
         contextSection.appendChild(contextDetails);
         logContent.appendChild(contextSection);
     }
-    
+
     // Add any additional fields dynamically
     const additionalFields = ['model', 'duration', 'status', 'error', 'tool', 'tool_call_index', 'tool_name', 'arguments'];
     const addedFields = new Set(['type', 'message', 'timestamp', 'payload', 'context']);
-    
+
     for (const field of additionalFields) {
         if (logEntry[field] !== undefined && !addedFields.has(field)) {
             const fieldElement = document.createElement('div');
             fieldElement.className = 'log-additional-field mt-1';
-            
+
             const fieldKey = document.createElement('strong');
             fieldKey.textContent = `${field.charAt(0).toUpperCase() + field.slice(1)}: `;
-            
+
             const fieldValue = document.createElement('span');
             if (typeof logEntry[field] === 'object') {
                 try {
@@ -616,455 +453,246 @@ function createLogElement(logEntry) {
             } else {
                 fieldValue.textContent = String(logEntry[field]);
             }
-            
+
             fieldElement.appendChild(fieldKey);
             fieldElement.appendChild(fieldValue);
             logContent.appendChild(fieldElement);
-            
+
             addedFields.add(field);
         }
     }
-    
+
     logElement.appendChild(logHeader);
     logElement.appendChild(logContent);
-    
+
     return logElement;
 }
 
 function addSystemLog(message, isError = false) {
     const logsDisplay = document.getElementById('logs-display');
     if (!logsDisplay) return;
-    
+
     const logElement = document.createElement('div');
     logElement.className = 'log-entry ' + (isError ? 'error-log' : 'system-log');
-    
+
     const logHeader = document.createElement('div');
     logHeader.className = 'log-header';
-    
+
     const logTypeBadge = document.createElement('span');
     logTypeBadge.className = 'log-type-badge badge ' + (isError ? 'bg-danger' : 'bg-secondary');
     logTypeBadge.textContent = isError ? 'ERROR' : 'SYSTEM';
-    
+
     const logTimestamp = document.createElement('span');
     logTimestamp.className = 'log-timestamp small text-muted';
     logTimestamp.textContent = new Date().toISOString();
-    
+
     logHeader.appendChild(logTypeBadge);
     logHeader.appendChild(logTimestamp);
-    
+
     const logContent = document.createElement('div');
     logContent.className = 'log-content';
     logContent.textContent = message;
-    
+
     logElement.appendChild(logHeader);
     logElement.appendChild(logContent);
-    
+
     logsDisplay.appendChild(logElement);
-    
-    // Auto-scroll to bottom
+
     setTimeout(() => {
         logsDisplay.scrollTop = logsDisplay.scrollHeight;
     }, 50);
 }
 
-// Column Resizing Functionality
-function initializeColumnResizing() {
-    const resizeHandle = document.getElementById('column-resize-handle');
-    if (!resizeHandle) return;
-
-    const container = resizeHandle.parentElement;
-    const chatColumn = container.querySelector('.chat-column');
-    const logsColumn = container.querySelector('.logs-column');
-
-    let isResizing = false;
-    let startX = 0;
-    let startWidths = { chat: 0, logs: 0 };
-
-    // Mouse down event - start resizing
-    resizeHandle.addEventListener('mousedown', function(e) {
-        isResizing = true;
-        startX = e.clientX;
-
-        // Store initial widths
-        startWidths.chat = chatColumn.getBoundingClientRect().width;
-        startWidths.logs = logsColumn.getBoundingClientRect().width;
-
-        // Prevent text selection during resize
-        document.body.style.userSelect = 'none';
-        document.body.style.cursor = 'col-resize';
-        container.classList.add('resizing');
-
-        e.preventDefault();
-    });
-
-    // Mouse move event - resize columns
-    document.addEventListener('mousemove', function(e) {
-        if (!isResizing) return;
-
-        // Calculate new widths
-        const deltaX = e.clientX - startX;
-        const newChatWidth = startWidths.chat + deltaX;
-        const newLogsWidth = startWidths.logs - deltaX;
-
-        // Apply minimum and maximum constraints
-        const minWidth = 200;
-        const maxWidth = container.clientWidth - minWidth - 8; // 8px for resize handle
-
-        const constrainedChatWidth = Math.max(minWidth, Math.min(newChatWidth, maxWidth));
-        const constrainedLogsWidth = Math.max(minWidth, Math.min(newLogsWidth, maxWidth));
-
-        // Apply widths
-        chatColumn.style.flex = `0 0 ${constrainedChatWidth}px`;
-        logsColumn.style.flex = `0 0 ${constrainedLogsWidth}px`;
-
-        // Update resize handle position
-        resizeHandle.style.left = `${constrainedChatWidth}px`;
-    });
-
-    // Mouse up event - stop resizing
-    document.addEventListener('mouseup', function() {
-        if (!isResizing) return;
-
-        isResizing = false;
-        document.body.style.userSelect = '';
-        document.body.style.cursor = '';
-        container.classList.remove('resizing');
-
-        // Save preference to localStorage
-        const chatWidth = chatColumn.getBoundingClientRect().width;
-        const logsWidth = logsColumn.getBoundingClientRect().width;
-        localStorage.setItem('columnWidths', JSON.stringify({
-            chat: chatWidth,
-            logs: logsWidth
-        }));
-    });
-
-    // Load saved preferences
-    loadColumnPreferences();
-}
-
-function loadColumnPreferences() {
-    const savedWidths = localStorage.getItem('columnWidths');
-    if (!savedWidths) return;
-
-    try {
-        const widths = JSON.parse(savedWidths);
-        const chatColumn = document.querySelector('.chat-column');
-        const logsColumn = document.querySelector('.logs-column');
-
-        if (chatColumn && logsColumn) {
-            // Apply saved widths
-            chatColumn.style.flex = `0 0 ${widths.chat}px`;
-            logsColumn.style.flex = `0 0 ${widths.logs}px`;
-
-            // Position resize handle
-            const resizeHandle = document.getElementById('column-resize-handle');
-            if (resizeHandle) {
-                resizeHandle.style.left = `${widths.chat}px`;
-            }
-        }
-    } catch (error) {
-        console.warn('Failed to load column preferences:', error);
-    }
-}
-
-// Window Resize Handling
-function initializeWindowResizeHandling() {
-    let resizeTimeout;
-
-    window.addEventListener('resize', function() {
-        // Debounce resize events
-        clearTimeout(resizeTimeout);
-        resizeTimeout = setTimeout(function() {
-            // Ensure columns maintain proper proportions on resize
-            const container = document.querySelector('.resizable-container');
-            if (!container) return;
-
-            const chatColumn = container.querySelector('.chat-column');
-            const logsColumn = container.querySelector('.logs-column');
-
-            if (chatColumn && logsColumn) {
-                // If no custom widths set, maintain 50-50 ratio
-                if (!chatColumn.style.flex && !logsColumn.style.flex) {
-                    chatColumn.style.flex = '1';
-                    logsColumn.style.flex = '1';
-                }
-            }
-        }, 100);
-    });
-}
-
-// Enhanced log filtering functionality
-function initializeEnhancedLogFiltering() {
-    console.log('initializeEnhancedLogFiltering called');
-    
-    // Try to find enhanced filtering elements
-    const typeFilter = document.getElementById('log-type-filter');
-    const levelFilter = document.getElementById('log-level-filter');
+// Trace filter row: a 4-segment control (All / LLM / Avi / Errors) plus a
+// search field, replacing the old type+level selects and legacy checkboxes.
+// Segments map to the same /api/logs/enhanced query the old selects drove.
+function initializeTraceFiltering() {
+    const segButtons = document.querySelectorAll('#trace-type-seg .trace-seg-opt');
     const searchInput = document.getElementById('log-search');
     const clearSearchBtn = document.getElementById('clear-search');
-    const clearFiltersBtn = document.getElementById('clear-filters');
     const clearLogsButton = document.getElementById('clear-logs');
     const logsDisplay = document.getElementById('logs-display');
+    const statusText = document.getElementById('trace-status-text');
+    const statusDot = document.getElementById('trace-status-dot');
 
-    console.log('Filter elements found:', {
-        typeFilter: !!typeFilter,
-        levelFilter: !!levelFilter,
-        searchInput: !!searchInput,
-        clearSearchBtn: !!clearSearchBtn,
-        clearFiltersBtn: !!clearFiltersBtn
-    });
-    
-    // Check if we have the enhanced filtering UI
-    const hasEnhancedFiltering = typeFilter && levelFilter && searchInput;
-    
-    console.log('Enhanced log filtering available:', hasEnhancedFiltering);
+    if (!logsDisplay || segButtons.length === 0 || !searchInput) return;
 
-    if (!hasEnhancedFiltering) {
-        console.log('Enhanced filtering UI not found, using legacy system');
-        return false; // Enhanced filtering not available
-    }
-    
-    // Store the current EventSource connection
     let currentEventSource = null;
-    
-    // Connect to enhanced logs endpoint
-    function connectEnhancedLogs() {
-        // Disconnect any existing connection
+    let activeSeg = document.querySelector('#trace-type-seg .trace-seg-opt.is-active') || segButtons[0];
+
+    function connectTraceStream() {
         if (currentEventSource) {
             currentEventSource.close();
         }
 
         // Clear the current view — the new connection replays full matching
         // history, so old entries must go or they'd just pile up underneath it.
-        if (logsDisplay) {
-            logsDisplay.innerHTML = '';
-        }
+        logsDisplay.innerHTML = '';
 
-        const logType = typeFilter.value;
-        const level = levelFilter.value;
+        const logType = activeSeg.dataset.type || 'all';
+        const level = activeSeg.dataset.level || 'all';
         const search = searchInput.value;
-        
+
         const url = `/api/logs/enhanced?type=${logType}&level=${level}&search=${encodeURIComponent(search)}`;
-        console.log('Connecting to URL:', url);
-        
-        console.log('Connecting to enhanced logs SSE:', url);
-        
-        // Use EventSource for SSE
+
         currentEventSource = new EventSource(url);
-        
+
         currentEventSource.onopen = function() {
-            console.log('Enhanced logs SSE connection established');
+            if (statusDot) statusDot.classList.add('is-healthy');
+            if (statusText) statusText.textContent = 'Live · following stream';
         };
-        
+
         currentEventSource.onmessage = function(e) {
             const log = JSON.parse(e.data);
             processLogEntry(log);
         };
-        
-        currentEventSource.onerror = function(error) {
-            console.error("Enhanced logs EventSource error:", error);
-            // Don't fallback to legacy - let the enhanced system handle reconnection
-            setTimeout(connectEnhancedLogs, 2000); // Reconnect after delay
+
+        currentEventSource.onerror = function() {
+            console.error('Trace stream error, reconnecting…');
+            if (statusDot) statusDot.classList.remove('is-healthy');
+            if (statusText) statusText.textContent = 'Stream disconnected · retrying';
+            setTimeout(connectTraceStream, 2000);
         };
     }
-    
-    // Clear logs view (history still replays from the server on the next
-    // filter change or reload — this only clears what's currently shown)
-    if (clearLogsButton && logsDisplay) {
+
+    segButtons.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            if (btn === activeSeg) return;
+            activeSeg.classList.remove('is-active');
+            btn.classList.add('is-active');
+            activeSeg = btn;
+            connectTraceStream();
+        });
+    });
+
+    if (clearSearchBtn) {
+        clearSearchBtn.addEventListener('click', function() {
+            searchInput.value = '';
+            connectTraceStream();
+        });
+    }
+
+    if (clearLogsButton) {
         clearLogsButton.addEventListener('click', function() {
             logsDisplay.innerHTML = '';
             addSystemLog('Logs cleared by user');
         });
     }
 
-    // Clear search input
-    clearSearchBtn.addEventListener('click', function() {
-        searchInput.value = '';
-        connectEnhancedLogs();
-    });
-    
-    // Clear all filters
-    clearFiltersBtn.addEventListener('click', function() {
-        typeFilter.value = 'all';
-        levelFilter.value = 'all';
-        searchInput.value = '';
-        connectEnhancedLogs();
-    });
-    
-    // Debounced search
     let searchTimeout;
     searchInput.addEventListener('input', function() {
         clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(connectEnhancedLogs, 500);
+        searchTimeout = setTimeout(connectTraceStream, 500);
     });
-    
-    // Filter changes
-    typeFilter.addEventListener('change', connectEnhancedLogs);
-    levelFilter.addEventListener('change', connectEnhancedLogs);
-    
-    // Initial connection
-    connectEnhancedLogs();
-    
-    console.log('Enhanced log filtering initialized successfully');
-    return true; // Enhanced filtering is active
+
+    connectTraceStream();
+}
+
+// Empty-state prompt buttons (screen 2a): fill the composer and submit.
+function initializePromptButtons() {
+    document.querySelectorAll('.prompt-btn[data-prompt]').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            const messageInput = document.getElementById('message-input');
+            const chatForm = document.getElementById('chat-form');
+            if (!messageInput || !chatForm) return;
+            messageInput.value = btn.dataset.prompt;
+            chatForm.requestSubmit ? chatForm.requestSubmit() : chatForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        });
+    });
+}
+
+function resetToEmptyState() {
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return;
+    const emptyState = document.getElementById('empty-state');
+    chatMessages.innerHTML = '';
+    if (emptyState) {
+        chatMessages.appendChild(emptyState);
+    }
 }
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOMContentLoaded event fired');
-    
-    // Small delay to ensure DOM is fully ready
-    setTimeout(function() {
-        // Initialize dark mode toggle
-        initializeDarkModeToggle();
-    
-    // Display version information
     displayVersionInfo();
-
-    // Initialize node-link diagram download buttons on API results
     initializeDiagramDownload();
-
-    // Initialize tooltips for API logs link
     initializeTooltips();
-    
-    // Initialize enhanced log filtering if available
-    const enhancedFilteringActive = initializeEnhancedLogFiltering();
-    
-    console.log('Enhanced filtering active:', enhancedFilteringActive);
-    
-    // Initialize SSE logs (fallback) only if enhanced filtering is not active
-    if (!enhancedFilteringActive) {
-        console.log('Using legacy log system');
-        initializeSSELogs();
-    } else {
-        console.log('Using enhanced log system - legacy system disabled');
-    }
-    
-    // Initialize column resizing
-    initializeColumnResizing();
-    
-    // Initialize window resize handling
-    initializeWindowResizeHandling();
-    
-    // Get DOM elements once
+    initializeTraceFiltering();
+    initializePromptButtons();
+
     const messageInput = document.getElementById('message-input');
     const chatForm = document.getElementById('chat-form');
     const clearChatButton = document.getElementById('clear-chat');
+    const newSessionButton = document.getElementById('new-session-btn');
     const exportChatButton = document.getElementById('export-chat');
-    
-    // Auto-focus on message input
+
     if (messageInput) {
         messageInput.focus();
     }
-    
-    // Check connection status
+
     checkConnectionStatus();
-    setInterval(checkConnectionStatus, 30000); // Check every 30 seconds
-    
-    // Clear chat functionality
+    setInterval(checkConnectionStatus, 30000);
+
     if (clearChatButton) {
         clearChatButton.addEventListener('click', function() {
             if (confirm('Are you sure you want to clear the chat?')) {
-                const chatMessages = document.getElementById('chat-messages');
-                if (chatMessages) {
-                    // Keep the welcome message
-                    const welcomeMessage = chatMessages.querySelector('.welcome-message');
-                    chatMessages.innerHTML = '';
-                    if (welcomeMessage) {
-                        chatMessages.appendChild(welcomeMessage);
-                    }
-                }
+                resetToEmptyState();
             }
         });
     }
-    
-    // Handle form submission
+
+    if (newSessionButton) {
+        newSessionButton.addEventListener('click', resetToEmptyState);
+    }
+
     if (chatForm) {
         chatForm.addEventListener('htmx:afterRequest', function(event) {
-            // Clear the input after successful submission
             if (event.detail.successful) {
                 if (messageInput) {
                     messageInput.value = '';
                 }
-                // Scroll to bottom
                 const chatMessages = document.getElementById('chat-messages');
                 if (chatMessages) {
                     setTimeout(function() {
                         chatMessages.scrollTop = chatMessages.scrollHeight;
-                    }, 100); // Small delay to ensure content is rendered
+                    }, 100);
                 }
             }
-            
-            // Re-focus on input
             if (messageInput) {
                 messageInput.focus();
             }
         });
-        
-        // Add visual feedback during request processing
-        chatForm.addEventListener('htmx:beforeRequest', function(event) {
-            const loadingIndicator = document.getElementById('loading-indicator');
-            if (loadingIndicator) {
-                loadingIndicator.style.display = 'block';
-            }
-            
-            // Disable submit button during processing
-            const sendButton = document.getElementById('send-button');
-            if (sendButton) {
-                sendButton.disabled = true;
-                sendButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-            }
-        });
-        
-        // Restore UI after request completes
-        chatForm.addEventListener('htmx:afterRequest', function(event) {
-            const loadingIndicator = document.getElementById('loading-indicator');
-            if (loadingIndicator) {
-                loadingIndicator.style.display = 'none';
-            }
-            
-            // Re-enable submit button
-            const sendButton = document.getElementById('send-button');
-            if (sendButton) {
-                sendButton.disabled = false;
-                sendButton.innerHTML = '<i class="fas fa-paper-plane"></i>';
-            }
-        });
     }
-    
-    // Handle Enter key in input
+
     if (messageInput) {
         messageInput.addEventListener('keypress', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (chatForm) {
-                    chatForm.dispatchEvent(new Event('submit'));
+                    chatForm.requestSubmit ? chatForm.requestSubmit() : chatForm.dispatchEvent(new Event('submit'));
                 }
             }
         });
     }
-    
-    // Export chat functionality
+
     if (exportChatButton) {
         exportChatButton.addEventListener('click', function() {
             const chatMessages = document.getElementById('chat-messages');
             if (!chatMessages) return;
-            
-            const messages = chatMessages.querySelectorAll('.message:not(.welcome-message .message)');
-            
-            let exportText = 'VMware Avi LLM Agent - Chat Export\n';
+
+            const messages = chatMessages.querySelectorAll('.message');
+
+            let exportText = 'Avi Agent - Chat Export\n';
             exportText += '=====================================\n\n';
-            
+
             messages.forEach(function(message) {
-                const header = message.querySelector('.message-header strong').textContent;
-                const timestamp = message.querySelector('.timestamp').textContent;
-                const content = message.querySelector('.message-content').textContent.trim();
-                
-                exportText += `${header} (${timestamp}):\n${content}\n\n`;
+                const headerStrong = message.querySelector('.message-header strong');
+                const timestamp = message.querySelector('.timestamp');
+                const content = message.querySelector('.message-content');
+                if (!headerStrong || !content) return;
+
+                exportText += `${headerStrong.textContent} (${timestamp ? timestamp.textContent : ''}):\n${content.textContent.trim()}\n\n`;
             });
-            
-            // Create and download file
+
             const blob = new Blob([exportText], { type: 'text/plain' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1079,44 +707,36 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function checkConnectionStatus() {
+    const indicator = document.getElementById('connection-indicator');
+    if (!indicator) return;
+
+    const statusDot = indicator.querySelector('.status-dot');
+    const statusText = indicator.querySelector('small');
+    const startedAt = performance.now();
+
     fetch('/api/health')
         .then(response => response.json())
         .then(data => {
-            const indicator = document.getElementById('connection-indicator');
-            if (!indicator) return;
-            
-            const statusDot = indicator.querySelector('.status-dot');
-            const statusText = indicator.querySelector('small');
-            
+            const latencyMs = Math.round(performance.now() - startedAt);
             if (data.avi_status === 'healthy' && data.llm_status === 'healthy') {
-                statusDot.className = 'status-dot status-healthy me-2';
-                statusText.textContent = 'Connected';
-                statusText.className = 'text-success';
+                statusDot.className = 'status-dot is-healthy';
+                statusText.textContent = `Controller healthy · ${latencyMs}ms`;
             } else {
-                statusDot.className = 'status-dot status-error me-2';
-                statusText.textContent = 'Connection Issues';
-                statusText.className = 'text-danger';
+                statusDot.className = 'status-dot is-critical';
+                statusText.textContent = 'Controller degraded';
             }
         })
-        .catch(error => {
-            const indicator = document.getElementById('connection-indicator');
-            if (!indicator) return;
-            
-            const statusDot = indicator.querySelector('.status-dot');
-            const statusText = indicator.querySelector('small');
-            
-            statusDot.className = 'status-dot status-error me-2';
-            statusText.textContent = 'Connection Failed';
-            statusText.className = 'text-danger';
+        .catch(() => {
+            statusDot.className = 'status-dot is-critical';
+            statusText.textContent = 'Controller unreachable';
         });
 }
 
-// Initialize tooltips for UI elements
+// Simple tooltip implementation for [title] elements
 function initializeTooltips() {
     const tooltipElements = document.querySelectorAll('[title]');
-    
+
     tooltipElements.forEach(element => {
-        // Simple tooltip implementation
         element.addEventListener('mouseenter', function() {
             const title = this.getAttribute('title');
             if (title) {
@@ -1124,25 +744,24 @@ function initializeTooltips() {
                 tooltip.className = 'custom-tooltip';
                 tooltip.textContent = title;
                 tooltip.style.position = 'absolute';
-                tooltip.style.backgroundColor = 'rgba(var(--color-slate-900-rgb), 0.9)';
-                tooltip.style.color = 'var(--color-white)';
-                tooltip.style.padding = '0.25rem 0.5rem';
-                tooltip.style.borderRadius = 'var(--border-radius-sm)';
-                tooltip.style.fontSize = 'var(--font-size-xs)';
+                tooltip.style.backgroundColor = 'rgba(20, 22, 31, 0.95)';
+                tooltip.style.color = '#e9e9ed';
+                tooltip.style.padding = '4px 8px';
+                tooltip.style.borderRadius = '4px';
+                tooltip.style.fontSize = '11px';
                 tooltip.style.zIndex = '1000';
                 tooltip.style.whiteSpace = 'nowrap';
                 tooltip.style.pointerEvents = 'none';
-                
+
                 document.body.appendChild(tooltip);
                 this._tooltip = tooltip;
-                
-                // Position tooltip
+
                 const rect = this.getBoundingClientRect();
                 tooltip.style.left = (rect.left + window.scrollX + rect.width/2 - tooltip.offsetWidth/2) + 'px';
                 tooltip.style.top = (rect.top + window.scrollY - tooltip.offsetHeight - 5) + 'px';
             }
         });
-        
+
         element.addEventListener('mouseleave', function() {
             if (this._tooltip) {
                 document.body.removeChild(this._tooltip);
@@ -1151,13 +770,3 @@ function initializeTooltips() {
         });
     });
 }
-
-// Utility function to format JSON for display
-function formatJsonForDisplay(jsonObj) {
-    try {
-        return JSON.stringify(jsonObj, null, 2);
-    } catch (e) {
-        return String(jsonObj);
-    }
-}
-});

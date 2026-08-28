@@ -887,12 +887,32 @@ func (s *Server) handleIndex(c *gin.Context) {
 		defaultModel = s.config.Mistral.DefaultModel
 	}
 
+	// Tool count for the empty-state lede. Peek at an already-connected MCP
+	// client rather than calling getMcpAviClient, which would lazily spawn
+	// the subprocess just to render the homepage.
+	s.mcpAviClientMu.Lock()
+	mcpClient := s.mcpAviClient
+	s.mcpAviClientMu.Unlock()
+	toolCount := len(llm.GetAviToolDefinitions())
+	if mcpClient != nil {
+		if n := len(mcpClient.Tools()); n > 0 {
+			toolCount = n
+		}
+	}
+
+	tenant := s.config.Avi.Tenant
+	if tenant == "" {
+		tenant = "admin"
+	}
+
 	c.HTML(http.StatusOK, "index.html", gin.H{
 		"title":        "VMware Avi LLM Agent",
 		"models":       models,
 		"defaultModel": defaultModel,
 		"version":      s.version,
 		"buildDate":    s.buildDate,
+		"tenant":       tenant,
+		"toolCount":    toolCount,
 	})
 }
 
