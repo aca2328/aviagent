@@ -24,6 +24,7 @@ import (
 	"aviagent/internal/llm"
 	"aviagent/internal/mcpavi"
 	"aviagent/internal/python"
+	"aviagent/internal/web/render"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -542,22 +543,56 @@ func toJSON(v interface{}) string {
 // instead of hundreds of individually-wrapped paragraph elements.
 func renderChatMessage(message string) template.HTML {
 	var b strings.Builder
+	var jsonBuf strings.Builder
 	inCodeBlock := false
 	blockIsAPIResult := false
 	blockIsWriteRefusal := false
 	pendingToolName := ""
 	pendingIsWriteRefusal := false
+	currentBlockTool := ""
 
 	for _, line := range strings.Split(message, "\n") {
 		if inCodeBlock {
 			if line == "```" {
-				b.WriteString("</code></pre>")
-				if blockIsAPIResult || blockIsWriteRefusal {
-					b.WriteString("</div>")
+				if blockIsAPIResult {
+					// Everything about this block (wrapper, toolbar, and
+					// whether a structured table renders) was deferred to
+					// here, now that the full JSON text is known -- see the
+					// api-result open-fence branch below.
+					jsonText := jsonBuf.String()
+					jsonID := "api-result-" + uuid.New().String()
+					b.WriteString(`<div class="api-result-block" data-tool="`)
+					b.WriteString(html.EscapeString(currentBlockTool))
+					b.WriteString(`">`)
+					b.WriteString(`<div class="api-result-toolbar d-flex gap-2 mb-2">`)
+					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary diagram-download-btn" title="Download this result as a standalone node-link diagram page">`)
+					b.WriteString(`<i class="fas fa-diagram-project"></i> Download Diagram</button>`)
+					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
+					b.WriteString(jsonID)
+					b.WriteString(`" aria-expanded="false" aria-controls="`)
+					b.WriteString(jsonID)
+					b.WriteString(`"><i class="fas fa-code"></i> Show/Hide JSON</button>`)
+					b.WriteString(`</div>`)
+					b.WriteString(render.ObjectTable(jsonText))
+					b.WriteString(`<pre class="bg-light p-3 rounded collapse" id="`)
+					b.WriteString(jsonID)
+					b.WriteString(`"><code>`)
+					b.WriteString(html.EscapeString(jsonText))
+					b.WriteString(`</code></pre></div>`)
 					blockIsAPIResult = false
-					blockIsWriteRefusal = false
+					jsonBuf.Reset()
+					currentBlockTool = ""
+				} else {
+					b.WriteString("</code></pre>")
+					if blockIsWriteRefusal {
+						b.WriteString("</div>")
+						blockIsWriteRefusal = false
+					}
 				}
 				inCodeBlock = false
+			} else if blockIsAPIResult {
+				jsonBuf.WriteString(line)
+				jsonBuf.WriteString("\n")
 			} else {
 				b.WriteString(html.EscapeString(line))
 				b.WriteString("\n")
@@ -571,47 +606,35 @@ func renderChatMessage(message string) template.HTML {
 				b.WriteString(`<code class="bg-light px-2 py-1 rounded">`)
 				b.WriteString(html.EscapeString(line[3 : len(line)-3]))
 				b.WriteString(`</code>`)
-			} else {
-				jsonID := ""
-				if pendingToolName != "" && line == "```json" {
-					if pendingIsWriteRefusal {
-						blockIsWriteRefusal = true
-						jsonID = "write-refusal-" + uuid.New().String()
-						b.WriteString(`<div class="write-refusal-card" data-tool="`)
-						b.WriteString(html.EscapeString(pendingToolName))
-						b.WriteString(`">`)
-						b.WriteString(`<div class="write-refusal-toolbar d-flex gap-2 mb-2">`)
-						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-warning write-unlock-btn">`)
-						b.WriteString(`<i class="fas fa-lock-open"></i> Unlock and apply</button>`)
-						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
-						b.WriteString(jsonID)
-						b.WriteString(`" aria-expanded="false" aria-controls="`)
-						b.WriteString(jsonID)
-						b.WriteString(`"><i class="fas fa-code"></i> Show/Hide details</button>`)
-						b.WriteString(`</div>`)
-					} else {
-						blockIsAPIResult = true
-						jsonID = "api-result-" + uuid.New().String()
-						b.WriteString(`<div class="api-result-block" data-tool="`)
-						b.WriteString(html.EscapeString(pendingToolName))
-						b.WriteString(`">`)
-						b.WriteString(`<div class="api-result-toolbar d-flex gap-2 mb-2">`)
-						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary diagram-download-btn" title="Download this result as a standalone node-link diagram page">`)
-						b.WriteString(`<i class="fas fa-diagram-project"></i> Download Diagram</button>`)
-						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
-						b.WriteString(jsonID)
-						b.WriteString(`" aria-expanded="false" aria-controls="`)
-						b.WriteString(jsonID)
-						b.WriteString(`"><i class="fas fa-code"></i> Show/Hide JSON</button>`)
-						b.WriteString(`</div>`)
-					}
-				}
-				b.WriteString(`<pre class="bg-light p-3 rounded`)
-				if jsonID != "" {
-					b.WriteString(` collapse" id="`)
-					b.WriteString(jsonID)
-				}
+			} else if pendingToolName != "" && line == "```json" && pendingIsWriteRefusal {
+				blockIsWriteRefusal = true
+				jsonID := "write-refusal-" + uuid.New().String()
+				b.WriteString(`<div class="write-refusal-card" data-tool="`)
+				b.WriteString(html.EscapeString(pendingToolName))
+				b.WriteString(`">`)
+				b.WriteString(`<div class="write-refusal-toolbar d-flex gap-2 mb-2">`)
+				b.WriteString(`<button type="button" class="btn btn-sm btn-outline-warning write-unlock-btn">`)
+				b.WriteString(`<i class="fas fa-lock-open"></i> Unlock and apply</button>`)
+				b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
+				b.WriteString(jsonID)
+				b.WriteString(`" aria-expanded="false" aria-controls="`)
+				b.WriteString(jsonID)
+				b.WriteString(`"><i class="fas fa-code"></i> Show/Hide details</button>`)
+				b.WriteString(`</div>`)
+				b.WriteString(`<pre class="bg-light p-3 rounded collapse" id="`)
+				b.WriteString(jsonID)
 				b.WriteString(`"><code>`)
+				inCodeBlock = true
+			} else if pendingToolName != "" && line == "```json" {
+				// Deferred: the wrapper, toolbar, and any structured table
+				// are all written at the closing fence above, once the full
+				// JSON text (and therefore whether ObjectTable recognizes
+				// it) is known.
+				blockIsAPIResult = true
+				currentBlockTool = pendingToolName
+				inCodeBlock = true
+			} else {
+				b.WriteString(`<pre class="bg-light p-3 rounded"><code>`)
 				inCodeBlock = true
 			}
 			pendingToolName = ""
