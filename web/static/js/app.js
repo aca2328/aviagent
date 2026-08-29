@@ -92,12 +92,26 @@ function initializeDiagramDownload() {
 // Trace (API log) streaming
 let logPauseState = false;
 let logJsonIdCounter = 0;
+let pausedEntries = [];
+
+function updatePausedFooter() {
+    const statusText = document.getElementById('trace-status-text');
+    if (statusText) {
+        statusText.textContent = `Paused · ${pausedEntries.length} event${pausedEntries.length === 1 ? '' : 's'} buffered`;
+    }
+}
 
 function processLogEntry(logEntry) {
+    if (!shouldDisplayLog(logEntry)) return;
+
+    if (logPauseState) {
+        pausedEntries.push(logEntry);
+        updatePausedFooter();
+        return;
+    }
+
     const logsDisplay = document.getElementById('logs-display');
     if (!logsDisplay) return;
-
-    if (!shouldDisplayLog(logEntry)) return;
 
     const logElement = createLogElement(logEntry);
     logsDisplay.appendChild(logElement);
@@ -110,397 +124,267 @@ function processLogEntry(logEntry) {
 // Suppresses health-check noise from the trace stream — /health is polled
 // every 30s by checkConnectionStatus and isn't useful to show as a step.
 function shouldDisplayLog(logEntry) {
+    const ctx = logEntry.context || {};
     if (logEntry.message && logEntry.message.includes('Health check requested')) {
         return false;
     }
-    if (logEntry.endpoint === '/health') {
+    if (ctx.endpoint === '/health') {
         return false;
     }
     return true;
 }
 
-function createLogElement(logEntry) {
-    const logElement = document.createElement('div');
+// Classifies a raw trace/log entry into the step "kind" the design specifies
+// (prompt / llm / tool / system), picking an icon chip, title, status and
+// duration. Falls back to a quiet generic system row for everything else
+// (there are far more log types in this app than the three named kinds).
+// Server entries arrive as { type, message, context: {...} } — broadcastOperationLog's
+// extra fields (duration_ms, method, tool, result, error, ...) live under context,
+// not at the top level.
+function classifyTraceEntry(logEntry) {
+    const ctx = logEntry.context || {};
+    const durationMs = typeof ctx.duration_ms === 'number' ? ctx.duration_ms : null;
 
-    // Determine log type and class
-    let logTypeClass = 'system-log';
-    let logTypeText = 'SYSTEM';
-    let logIcon = 'fa-info-circle';
-
-    switch(logEntry.type) {
-        case 'mistral_request':
-            logTypeClass = 'mistral-request';
-            logTypeText = 'MISTRAL REQUEST';
-            logIcon = 'fa-robot';
-            break;
-        case 'mistral_response':
-            logTypeClass = 'mistral-response';
-            logTypeText = 'MISTRAL RESPONSE';
-            logIcon = 'fa-robot';
-            break;
-        case 'avi_request':
-            logTypeClass = 'avi-request';
-            logTypeText = 'AVI REQUEST';
-            logIcon = 'fa-server';
-            break;
-        case 'avi_response':
-            logTypeClass = 'avi-response';
-            logTypeText = 'AVI RESPONSE';
-            logIcon = 'fa-server';
-            break;
-        case 'error':
-            logTypeClass = 'error-log';
-            logTypeText = 'ERROR';
-            logIcon = 'fa-exclamation-triangle';
-            break;
-        case 'success':
-            logTypeClass = 'success-log';
-            logTypeText = 'SUCCESS';
-            logIcon = 'fa-check-circle';
-            break;
-        case 'warning':
-            logTypeClass = 'warning-log';
-            logTypeText = 'WARNING';
-            logIcon = 'fa-exclamation-circle';
-            break;
-        default:
-            logTypeClass = 'system-log';
-            logTypeText = 'SYSTEM';
-            logIcon = 'fa-info-circle';
+    if (logEntry.type === 'user_request') {
+        let excerpt = '';
+        try {
+            excerpt = JSON.parse(ctx.payload || '{}').message || '';
+        } catch (e) { /* payload not JSON-parseable; leave excerpt empty */ }
+        return {
+            kind: 'prompt',
+            icon: 'fa-user',
+            chipClass: 'chip-prompt',
+            title: 'Prompt received',
+            subline: excerpt,
+            duration: null,
+        };
     }
 
-    logElement.className = 'log-entry ' + logTypeClass;
-
-    // Create log header
-    const logHeader = document.createElement('div');
-    logHeader.className = 'log-header';
-
-    const logTypeBadge = document.createElement('span');
-    logTypeBadge.className = 'log-type-badge badge bg-secondary';
-    logTypeBadge.innerHTML = `<i class="fas ${logIcon}"></i> ${logTypeText}`;
-
-    const logTimestamp = document.createElement('span');
-    logTimestamp.className = 'log-timestamp small text-muted';
-    logTimestamp.textContent = logEntry.timestamp || new Date().toISOString();
-
-    logHeader.appendChild(logTypeBadge);
-
-    // Add status code for response logs
-    if (logEntry.status_code) {
-        const statusBadge = document.createElement('span');
-        statusBadge.className = 'log-status-badge badge ms-2';
-
-        const statusCode = logEntry.status_code;
-        if (statusCode >= 200 && statusCode < 300) {
-            statusBadge.classList.add('bg-success');
-        } else if (statusCode >= 300 && statusCode < 400) {
-            statusBadge.classList.add('bg-warning');
-        } else if (statusCode >= 400 && statusCode < 500) {
-            statusBadge.classList.add('bg-danger');
-        } else if (statusCode >= 500) {
-            statusBadge.classList.add('bg-danger');
+    if (logEntry.type === 'mistral_response') {
+        const step = ctx.step === 'compose' ? 'compose' : 'plan';
+        const failed = !!ctx.error;
+        let subline;
+        if (failed) {
+            subline = ctx.error;
+        } else if (typeof ctx.tool_calls_selected === 'number') {
+            subline = ctx.tool_calls_selected > 0
+                ? `${ctx.tool_calls_selected} tool${ctx.tool_calls_selected === 1 ? '' : 's'} selected`
+                : 'responded directly, no tools needed';
         } else {
-            statusBadge.classList.add('bg-secondary');
+            subline = '';
+        }
+        return {
+            kind: 'llm',
+            icon: 'fa-microchip',
+            chipClass: 'chip-llm',
+            title: `${ctx.model || 'model'} · ${step}`,
+            subline,
+            duration: durationMs,
+            status: failed ? 'error' : null,
+            detail: { method: ctx.method, path: ctx.endpoint, returned: failed ? null : (subline || undefined), error: failed ? ctx.error : null },
+            method: ctx.method,
+            endpoint: ctx.endpoint,
+            payload: ctx.payload,
+        };
+    }
+
+    if (logEntry.message === 'Tool call succeeded' || logEntry.message === 'Tool call failed' || logEntry.message === 'Tool call returned empty result') {
+        const failed = logEntry.message === 'Tool call failed';
+        const empty = logEntry.message === 'Tool call returned empty result';
+        let returned;
+        if (failed) {
+            returned = null;
+        } else if (empty) {
+            returned = 'empty result';
+        } else if (ctx.result && typeof ctx.result === 'object') {
+            if (Array.isArray(ctx.result.results)) {
+                returned = `${ctx.result.results.length} object${ctx.result.results.length === 1 ? '' : 's'}`;
+            } else {
+                returned = 'ok';
+            }
+        } else {
+            returned = 'ok';
+        }
+        return {
+            kind: 'tool',
+            icon: 'fa-server',
+            chipClass: 'chip-tool',
+            title: ctx.tool || 'tool call',
+            subline: failed ? ctx.error : '',
+            duration: durationMs,
+            status: failed ? 'error' : (empty ? 'warning' : 'healthy'),
+            detail: { returned, error: failed ? ctx.error : null },
+        };
+    }
+
+    // Generic system row — still shown (nothing is dropped), just quieter.
+    return {
+        kind: 'system',
+        icon: logEntry.type === 'error' ? 'fa-exclamation-triangle' : (logEntry.type === 'success' ? 'fa-check-circle' : 'fa-info-circle'),
+        chipClass: 'chip-system',
+        title: logEntry.message || logEntry.type || 'event',
+        subline: '',
+        duration: durationMs,
+        status: logEntry.type === 'error' ? 'error' : (logEntry.type === 'warning' ? 'warning' : null),
+    };
+}
+
+function formatTraceDuration(ms) {
+    if (ms === null || ms === undefined) return '';
+    if (ms === 0) return '0ms';
+    return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : ms + 'ms';
+}
+
+function buildCurlCommand(info) {
+    if (!info.method || !info.endpoint) return null;
+    const base = info.endpoint.startsWith('http') ? '' : window.location.origin;
+    let cmd = `curl -X ${info.method} '${base}${info.endpoint}'`;
+    if (info.payload) {
+        cmd += ` \\\n  -H 'Content-Type: application/json' \\\n  -d '${info.payload}'`;
+    }
+    return cmd;
+}
+
+function createLogElement(logEntry) {
+    const info = classifyTraceEntry(logEntry);
+
+    const step = document.createElement('div');
+    step.className = 'trace-step trace-step-' + info.kind;
+
+    const gutter = document.createElement('div');
+    gutter.className = 'trace-step-gutter';
+    const chip = document.createElement('span');
+    chip.className = 'trace-step-chip ' + info.chipClass;
+    chip.innerHTML = `<i class="fas ${info.icon}"></i>`;
+    const connector = document.createElement('span');
+    connector.className = 'trace-step-connector';
+    gutter.appendChild(chip);
+    gutter.appendChild(connector);
+
+    const body = document.createElement('div');
+    body.className = 'trace-step-body';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'trace-step-title-row';
+
+    const title = document.createElement('span');
+    title.className = 'trace-step-title';
+    title.textContent = info.title;
+    titleRow.appendChild(title);
+
+    const metaSpacer = document.createElement('div');
+    metaSpacer.className = 'trace-step-spacer';
+    titleRow.appendChild(metaSpacer);
+
+    if (info.status) {
+        const statusBadge = document.createElement('span');
+        statusBadge.className = 'trace-step-status trace-step-status-' + info.status;
+        statusBadge.innerHTML = '<span class="status-dot"></span>' + info.status;
+        titleRow.appendChild(statusBadge);
+    }
+
+    if (info.duration !== null && info.duration !== undefined) {
+        const durationEl = document.createElement('span');
+        durationEl.className = 'trace-step-duration' + (info.duration === 0 ? ' is-zero' : '');
+        durationEl.textContent = formatTraceDuration(info.duration);
+        titleRow.appendChild(durationEl);
+    }
+
+    body.appendChild(titleRow);
+
+    if (info.subline) {
+        const sublineEl = document.createElement('div');
+        sublineEl.className = 'trace-step-subline';
+        sublineEl.textContent = info.subline;
+        body.appendChild(sublineEl);
+    }
+
+    // Expanded detail: a method/path/returned key-value grid for steps that
+    // have one, plus a collapsed "Raw JSON" dump and, when we know the real
+    // method+endpoint, a "Copy as curl" button.
+    const detailRows = [];
+    if (info.detail) {
+        if (info.detail.method) detailRows.push(['method', info.detail.method]);
+        if (info.detail.path) detailRows.push(['path', info.detail.path]);
+        if (info.detail.returned) detailRows.push(['returned', info.detail.returned]);
+        if (info.detail.error) detailRows.push(['error', info.detail.error]);
+    }
+
+    if (detailRows.length > 0 || info.kind === 'tool' || info.kind === 'llm') {
+        const detailBox = document.createElement('div');
+        detailBox.className = 'trace-step-detail';
+
+        if (detailRows.length > 0) {
+            const grid = document.createElement('div');
+            grid.className = 'trace-step-kv';
+            detailRows.forEach(function([key, value]) {
+                const k = document.createElement('div');
+                k.className = 'trace-step-kv-key';
+                k.textContent = key;
+                const v = document.createElement('div');
+                v.className = 'trace-step-kv-value';
+                v.textContent = value;
+                grid.appendChild(k);
+                grid.appendChild(v);
+            });
+            detailBox.appendChild(grid);
         }
 
-        statusBadge.textContent = statusCode;
-        logHeader.appendChild(statusBadge);
-    }
+        const toolbar = document.createElement('div');
+        toolbar.className = 'trace-step-toolbar';
 
-    logHeader.appendChild(logTimestamp);
+        const rawId = 'trace-raw-' + (++logJsonIdCounter);
+        const rawToggle = document.createElement('button');
+        rawToggle.type = 'button';
+        rawToggle.className = 'trace-step-toolbar-btn';
+        rawToggle.setAttribute('data-bs-toggle', 'collapse');
+        rawToggle.setAttribute('data-bs-target', '#' + rawId);
+        rawToggle.setAttribute('aria-expanded', 'false');
+        rawToggle.setAttribute('aria-controls', rawId);
+        rawToggle.innerHTML = '<i class="fas fa-code"></i> Raw JSON';
+        toolbar.appendChild(rawToggle);
 
-    // Create log content
-    const logContent = document.createElement('div');
-    logContent.className = 'log-content';
+        const curlCmd = buildCurlCommand(info);
+        if (curlCmd) {
+            const curlBtn = document.createElement('button');
+            curlBtn.type = 'button';
+            curlBtn.className = 'trace-step-toolbar-btn';
+            curlBtn.innerHTML = '<i class="fas fa-terminal"></i> Copy as curl';
+            curlBtn.addEventListener('click', function() {
+                navigator.clipboard.writeText(curlCmd).then(function() {
+                    const original = curlBtn.innerHTML;
+                    curlBtn.innerHTML = '<i class="fas fa-check"></i> Copied';
+                    setTimeout(function() { curlBtn.innerHTML = original; }, 1500);
+                }).catch(function() { /* clipboard unavailable; silently ignore */ });
+            });
+            toolbar.appendChild(curlBtn);
+        }
 
-    // Main message
-    if (logEntry.message) {
-        const messageElement = document.createElement('div');
-        messageElement.className = 'log-message';
-        messageElement.textContent = logEntry.message;
-        logContent.appendChild(messageElement);
-    }
+        detailBox.appendChild(toolbar);
 
-    // Add payload if available
-    if (logEntry.payload) {
-        const payloadSection = document.createElement('div');
-        payloadSection.className = 'log-payload mt-2';
-
-        const payloadId = 'log-json-' + (++logJsonIdCounter);
-
-        const payloadHeader = document.createElement('div');
-        payloadHeader.className = 'd-flex justify-content-between align-items-center mb-1';
-
-        const payloadTitle = document.createElement('strong');
-        payloadTitle.textContent = 'Payload:';
-
-        const payloadToggle = document.createElement('button');
-        payloadToggle.type = 'button';
-        payloadToggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
-        payloadToggle.setAttribute('data-bs-toggle', 'collapse');
-        payloadToggle.setAttribute('data-bs-target', '#' + payloadId);
-        payloadToggle.setAttribute('aria-expanded', 'false');
-        payloadToggle.setAttribute('aria-controls', payloadId);
-        payloadToggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
-
-        payloadHeader.appendChild(payloadTitle);
-        payloadHeader.appendChild(payloadToggle);
-        payloadSection.appendChild(payloadHeader);
-
-        const payloadElement = document.createElement('pre');
-        payloadElement.className = 'log-payload-content collapse';
-        payloadElement.id = payloadId;
+        const rawPre = document.createElement('pre');
+        rawPre.className = 'log-payload-content collapse';
+        rawPre.id = rawId;
         try {
-            const formattedPayload = JSON.stringify(logEntry.payload, null, 2);
-            payloadElement.textContent = formattedPayload;
+            rawPre.textContent = JSON.stringify(logEntry, null, 2);
         } catch (e) {
-            payloadElement.textContent = logEntry.payload;
+            rawPre.textContent = String(logEntry);
         }
-        payloadSection.appendChild(payloadElement);
-        logContent.appendChild(payloadSection);
+        detailBox.appendChild(rawPre);
+
+        body.appendChild(detailBox);
     }
 
-    // Add headers if available
-    if (logEntry.headers) {
-        const headersSection = document.createElement('div');
-        headersSection.className = 'log-headers mt-2';
+    step.appendChild(gutter);
+    step.appendChild(body);
 
-        const headersTitle = document.createElement('strong');
-        headersTitle.textContent = 'Request Headers:';
-        headersSection.appendChild(headersTitle);
-
-        const headersDetails = document.createElement('div');
-        headersDetails.className = 'log-headers-details';
-
-        for (const [key, value] of Object.entries(logEntry.headers)) {
-            const headerItem = document.createElement('div');
-            headerItem.className = 'log-header-item';
-
-            const headerKey = document.createElement('span');
-            headerKey.className = 'log-header-key';
-            headerKey.textContent = `${key}: `;
-
-            const headerValue = document.createElement('span');
-            headerValue.className = 'log-header-value';
-            headerValue.textContent = String(value);
-
-            headerItem.appendChild(headerKey);
-            headerItem.appendChild(headerValue);
-            headersDetails.appendChild(headerItem);
-        }
-
-        headersSection.appendChild(headersDetails);
-        logContent.appendChild(headersSection);
-    }
-
-    // Add response headers if available
-    if (logEntry.response_headers) {
-        const responseHeadersSection = document.createElement('div');
-        responseHeadersSection.className = 'log-response-headers mt-2';
-
-        const responseHeadersTitle = document.createElement('strong');
-        responseHeadersTitle.textContent = 'Response Headers:';
-        responseHeadersSection.appendChild(responseHeadersTitle);
-
-        const responseHeadersDetails = document.createElement('div');
-        responseHeadersDetails.className = 'log-headers-details';
-
-        for (const [key, value] of Object.entries(logEntry.response_headers)) {
-            const headerItem = document.createElement('div');
-            headerItem.className = 'log-header-item';
-
-            const headerKey = document.createElement('span');
-            headerKey.className = 'log-header-key';
-            headerKey.textContent = `${key}: `;
-
-            const headerValue = document.createElement('span');
-            headerValue.className = 'log-header-value';
-            headerValue.textContent = String(value);
-
-            headerItem.appendChild(headerKey);
-            headerItem.appendChild(headerValue);
-            responseHeadersDetails.appendChild(headerItem);
-        }
-
-        responseHeadersSection.appendChild(responseHeadersDetails);
-        logContent.appendChild(responseHeadersSection);
-    }
-
-    // Add response payload if available
-    if (logEntry.response_payload) {
-        const responsePayloadSection = document.createElement('div');
-        responsePayloadSection.className = 'log-response-payload mt-2';
-
-        const responsePayloadId = 'log-json-' + (++logJsonIdCounter);
-
-        const responsePayloadHeader = document.createElement('div');
-        responsePayloadHeader.className = 'd-flex justify-content-between align-items-center mb-1';
-
-        const responsePayloadTitle = document.createElement('strong');
-        responsePayloadTitle.textContent = 'Response Payload:';
-
-        const responsePayloadToggle = document.createElement('button');
-        responsePayloadToggle.type = 'button';
-        responsePayloadToggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
-        responsePayloadToggle.setAttribute('data-bs-toggle', 'collapse');
-        responsePayloadToggle.setAttribute('data-bs-target', '#' + responsePayloadId);
-        responsePayloadToggle.setAttribute('aria-expanded', 'false');
-        responsePayloadToggle.setAttribute('aria-controls', responsePayloadId);
-        responsePayloadToggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
-
-        responsePayloadHeader.appendChild(responsePayloadTitle);
-        responsePayloadHeader.appendChild(responsePayloadToggle);
-        responsePayloadSection.appendChild(responsePayloadHeader);
-
-        const responsePayloadElement = document.createElement('pre');
-        responsePayloadElement.className = 'log-payload-content collapse';
-        responsePayloadElement.id = responsePayloadId;
-        try {
-            const formattedPayload = JSON.stringify(logEntry.response_payload, null, 2);
-            responsePayloadElement.textContent = formattedPayload;
-        } catch (e) {
-            responsePayloadElement.textContent = logEntry.response_payload;
-        }
-        responsePayloadSection.appendChild(responsePayloadElement);
-        logContent.appendChild(responsePayloadSection);
-    }
-
-    // Add context if available - display as structured details
-    if (logEntry.context && Object.keys(logEntry.context).length > 0) {
-        const contextSection = document.createElement('div');
-        contextSection.className = 'log-context mt-2';
-
-        const contextTitle = document.createElement('strong');
-        contextTitle.textContent = 'Details:';
-        contextSection.appendChild(contextTitle);
-
-        const contextDetails = document.createElement('div');
-        contextDetails.className = 'log-context-details';
-
-        // Display context as key-value pairs for better readability
-        for (const [key, value] of Object.entries(logEntry.context)) {
-            const detailItem = document.createElement('div');
-            detailItem.className = 'log-context-item';
-
-            const detailKey = document.createElement('span');
-            detailKey.className = 'log-context-key';
-            detailKey.textContent = `${key}: `;
-            detailItem.appendChild(detailKey);
-
-            let formatted;
-            if (typeof value === 'object' && value !== null) {
-                try {
-                    formatted = JSON.stringify(value, null, 2);
-                } catch (e) {
-                    formatted = String(value);
-                }
-            } else {
-                formatted = String(value);
-            }
-
-            // Large values (objects or long strings) get a collapsible block; small ones stay inline.
-            if (formatted.length > 200) {
-                const jsonId = 'log-json-' + (++logJsonIdCounter);
-
-                const toggle = document.createElement('button');
-                toggle.type = 'button';
-                toggle.className = 'btn btn-sm btn-outline-secondary log-json-toggle-btn';
-                toggle.setAttribute('data-bs-toggle', 'collapse');
-                toggle.setAttribute('data-bs-target', '#' + jsonId);
-                toggle.setAttribute('aria-expanded', 'false');
-                toggle.setAttribute('aria-controls', jsonId);
-                toggle.innerHTML = '<i class="fas fa-code"></i> Show/Hide JSON';
-                detailItem.appendChild(toggle);
-
-                const pre = document.createElement('pre');
-                pre.className = 'log-payload-content collapse mt-1';
-                pre.id = jsonId;
-                pre.textContent = formatted;
-                detailItem.appendChild(pre);
-            } else {
-                const detailValue = document.createElement('span');
-                detailValue.className = 'log-context-value';
-                detailValue.textContent = formatted;
-                detailItem.appendChild(detailValue);
-            }
-
-            contextDetails.appendChild(detailItem);
-        }
-
-        contextSection.appendChild(contextDetails);
-        logContent.appendChild(contextSection);
-    }
-
-    // Add any additional fields dynamically
-    const additionalFields = ['model', 'duration', 'status', 'error', 'tool', 'tool_call_index', 'tool_name', 'arguments'];
-    const addedFields = new Set(['type', 'message', 'timestamp', 'payload', 'context']);
-
-    for (const field of additionalFields) {
-        if (logEntry[field] !== undefined && !addedFields.has(field)) {
-            const fieldElement = document.createElement('div');
-            fieldElement.className = 'log-additional-field mt-1';
-
-            const fieldKey = document.createElement('strong');
-            fieldKey.textContent = `${field.charAt(0).toUpperCase() + field.slice(1)}: `;
-
-            const fieldValue = document.createElement('span');
-            if (typeof logEntry[field] === 'object') {
-                try {
-                    fieldValue.textContent = JSON.stringify(logEntry[field]);
-                } catch (e) {
-                    fieldValue.textContent = String(logEntry[field]);
-                }
-            } else {
-                fieldValue.textContent = String(logEntry[field]);
-            }
-
-            fieldElement.appendChild(fieldKey);
-            fieldElement.appendChild(fieldValue);
-            logContent.appendChild(fieldElement);
-
-            addedFields.add(field);
-        }
-    }
-
-    logElement.appendChild(logHeader);
-    logElement.appendChild(logContent);
-
-    return logElement;
+    return step;
 }
 
 function addSystemLog(message, isError = false) {
     const logsDisplay = document.getElementById('logs-display');
     if (!logsDisplay) return;
-
-    const logElement = document.createElement('div');
-    logElement.className = 'log-entry ' + (isError ? 'error-log' : 'system-log');
-
-    const logHeader = document.createElement('div');
-    logHeader.className = 'log-header';
-
-    const logTypeBadge = document.createElement('span');
-    logTypeBadge.className = 'log-type-badge badge ' + (isError ? 'bg-danger' : 'bg-secondary');
-    logTypeBadge.textContent = isError ? 'ERROR' : 'SYSTEM';
-
-    const logTimestamp = document.createElement('span');
-    logTimestamp.className = 'log-timestamp small text-muted';
-    logTimestamp.textContent = new Date().toISOString();
-
-    logHeader.appendChild(logTypeBadge);
-    logHeader.appendChild(logTimestamp);
-
-    const logContent = document.createElement('div');
-    logContent.className = 'log-content';
-    logContent.textContent = message;
-
-    logElement.appendChild(logHeader);
-    logElement.appendChild(logContent);
-
-    logsDisplay.appendChild(logElement);
-
-    setTimeout(() => {
-        logsDisplay.scrollTop = logsDisplay.scrollHeight;
-    }, 50);
+    processLogEntry({ type: isError ? 'error' : 'system', message: message, timestamp: new Date().toISOString() });
 }
 
 // Trace filter row: a 4-segment control (All / LLM / Avi / Errors) plus a
@@ -511,11 +395,41 @@ function initializeTraceFiltering() {
     const searchInput = document.getElementById('log-search');
     const clearSearchBtn = document.getElementById('clear-search');
     const clearLogsButton = document.getElementById('clear-logs');
+    const pauseButton = document.getElementById('pause-logs');
     const logsDisplay = document.getElementById('logs-display');
     const statusText = document.getElementById('trace-status-text');
     const statusDot = document.getElementById('trace-status-dot');
 
     if (!logsDisplay || segButtons.length === 0 || !searchInput) return;
+
+    function flushPausedEntries() {
+        pausedEntries.forEach(function(entry) {
+            const logElement = createLogElement(entry);
+            logsDisplay.appendChild(logElement);
+        });
+        pausedEntries = [];
+        logsDisplay.scrollTop = logsDisplay.scrollHeight;
+    }
+
+    if (pauseButton) {
+        pauseButton.addEventListener('click', function() {
+            logPauseState = !logPauseState;
+            const icon = pauseButton.querySelector('i');
+            if (logPauseState) {
+                icon.classList.remove('ph-pause');
+                icon.classList.add('ph-play');
+                pauseButton.setAttribute('title', 'Resume stream');
+                updatePausedFooter();
+            } else {
+                icon.classList.remove('ph-play');
+                icon.classList.add('ph-pause');
+                pauseButton.setAttribute('title', 'Pause stream');
+                flushPausedEntries();
+                if (statusDot) statusDot.classList.add('is-healthy');
+                if (statusText) statusText.textContent = 'Live · following stream';
+            }
+        });
+    }
 
     let currentEventSource = null;
     let activeSeg = document.querySelector('#trace-type-seg .trace-seg-opt.is-active') || segButtons[0];

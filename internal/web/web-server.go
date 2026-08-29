@@ -1136,7 +1136,9 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
 	defer cancel()
 
+	turnStart := time.Now()
 	response, err := s.processChatMessage(ctx, message, model, nil)
+	turnDuration := time.Since(turnStart)
 	if err != nil {
 		s.logger.Error("Failed to process chat message", zap.Error(err))
 		c.HTML(http.StatusInternalServerError, "chat.html", gin.H{
@@ -1166,6 +1168,7 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"assistant_message": assistantMessage,
 		"tool_calls": len(response.ToolCalls),
 		"response_length": len(assistantMessage),
+		"duration_ms": turnDuration.Milliseconds(),
 	})
 	
 	c.HTML(http.StatusOK, "chat.html", gin.H{
@@ -1183,6 +1186,7 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"message": message,
 		"response_length": len(assistantMessage),
 		"tool_calls": len(response.ToolCalls),
+		"duration_ms": turnDuration.Milliseconds(),
 	})
 }
 
@@ -1209,14 +1213,34 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	}
 
 	// Process the message with the appropriate LLM client
+	s.logAPICall("mistral", "POST", "/chat/completions", nil, map[string]interface{}{
+		"model":   model,
+		"message": message,
+	}, map[string]interface{}{
+		"step": "plan",
+	})
+	llmStart := time.Now()
 	var err error
 	llmResponse, err := s.llmClient.ProcessNaturalLanguageQuery(ctx, message, model, tools, convertedHistory)
+	llmDuration := time.Since(llmStart)
 	if err != nil {
+		s.logAPIResponse("mistral", "POST", "/chat/completions", 0, nil, nil, map[string]interface{}{
+			"step":        "plan",
+			"model":       model,
+			"duration_ms": llmDuration.Milliseconds(),
+			"error":       err.Error(),
+		})
 		if s.config.Provider == "ollama" {
 			return nil, fmt.Errorf("Ollama LLM processing failed: %w", err)
 		}
 		return nil, fmt.Errorf("LLM processing failed: %w", err)
 	}
+	s.logAPIResponse("mistral", "POST", "/chat/completions", 200, nil, nil, map[string]interface{}{
+		"step":                "plan",
+		"model":               model,
+		"duration_ms":         llmDuration.Milliseconds(),
+		"tool_calls_selected": len(llmResponse.ToolCalls),
+	})
 
 	// If there are tool calls, execute them
 	if len(llmResponse.ToolCalls) > 0 {
@@ -1234,13 +1258,16 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 				"arguments": toolCall.Function.Arguments,
 			})
 			
+			toolStart := time.Now()
 			result, err := s.executeToolCall(ctx, toolCall)
+			toolDuration := time.Since(toolStart)
 			if err != nil {
 				errorMsg := fmt.Sprintf("Tool call failed: %s - Error: %v", toolCall.Function.Name, err)
 				toolErrors = append(toolErrors, errorMsg)
 				s.broadcastOperationLog("error", "Tool call failed", map[string]interface{}{
 					"tool": toolCall.Function.Name,
 					"error": err.Error(),
+					"duration_ms": toolDuration.Milliseconds(),
 				})
 				// Continue with other tool calls even if one fails
 				continue
@@ -1258,10 +1285,12 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 				s.broadcastOperationLog("success", "Tool call succeeded", map[string]interface{}{
 					"tool": toolCall.Function.Name,
 					"result": result,
+					"duration_ms": toolDuration.Milliseconds(),
 				})
 			} else {
 				s.broadcastOperationLog("warning", "Tool call returned empty result", map[string]interface{}{
 					"tool": toolCall.Function.Name,
+					"duration_ms": toolDuration.Milliseconds(),
 				})
 			}
 		}
