@@ -1,0 +1,22 @@
+{{range .messages}}
+{{if eq .Role "user"}}
+<div class="message user-message">
+    <div class="message-header">
+        <strong><i class="fas fa-user"></i> You</strong>
+        <span class="timestamp">{{.Timestamp.Format "15:04:05"}}</span>
+    </div>
+    <div class="message-content">{{.Content}}</div>
+</div>
+{{else}}
+<div class="message assistant-message">
+    <div class="message-header">
+        <strong><i class="fas fa-robot"></i> Assistant</strong>
+        <span class="timestamp">{{.Timestamp.Format "15:04:05"}}</span>
+        {{if .Model}}
+        <span class="badge bg-secondary ms-2">{{.Model}}</span>
+        {{end}}
+    </div>
+    <div class="message-content">{{renderChatMessage .Content}}</div>
+</div>
+{{end}}
+{{end}}

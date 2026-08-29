@@ -87,6 +87,7 @@ type Server struct {
 	// Simple log buffer for API endpoint (no locking needed for reads)
 	simpleLogBuffer []map[string]interface{}
 	enhancedLogBuffer *LogBuffer
+	sessionStore      SessionStore
 }
 
 // EnhancedLogEntry represents a structured log entry with filtering support
@@ -114,6 +115,40 @@ func contextWithTurn(ctx context.Context, turnID string) context.Context {
 func turnIDFromContext(ctx context.Context) string {
 	turnID, _ := ctx.Value(turnIDContextKey{}).(string)
 	return turnID
+}
+
+// activeSessionCookie names the cookie that tracks which session a browser is
+// currently talking to. Its max-age matches sessionRetention so a cookie
+// never outlives the session file it points at.
+const activeSessionCookie = "active_session_id"
+
+func setActiveSessionCookie(c *gin.Context, sessionID string) {
+	c.SetCookie(activeSessionCookie, sessionID, int(sessionRetention.Seconds()), "/", "", false, true)
+}
+
+func clearActiveSessionCookie(c *gin.Context) {
+	c.SetCookie(activeSessionCookie, "", -1, "/", "", false, true)
+}
+
+// getOrCreateActiveSession returns the session a chat turn should be
+// persisted to: the browser's active_session_id cookie if it still points at
+// a live session, or a freshly created one (refreshing the cookie either
+// way, so a session's expiry keeps sliding while it's actually in use).
+func (s *Server) getOrCreateActiveSession(c *gin.Context, model string) string {
+	if id, err := c.Cookie(activeSessionCookie); err == nil && id != "" {
+		if _, err := s.sessionStore.Get(id); err == nil {
+			setActiveSessionCookie(c, id)
+			return id
+		}
+	}
+
+	session, err := s.sessionStore.Create(model)
+	if err != nil {
+		s.logger.Error("Failed to create chat session", zap.Error(err))
+		return ""
+	}
+	setActiveSessionCookie(c, session.ID)
+	return session.ID
 }
 
 // LogBuffer represents an enhanced log buffer with filtering capabilities
@@ -394,6 +429,11 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		zap.String("tenant", cfg.Avi.Tenant),
 		zap.Bool("insecure", cfg.Avi.Insecure))
 
+	sessionStore, err := NewJSONLSessionStore(cfg.Sessions.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize session store: %w", err)
+	}
+
 	// Create server with version info immediately
 	server := &Server{
 		config:        cfg,
@@ -405,6 +445,7 @@ func NewServer(cfg *config.Config, logger *zap.Logger, appName, version, buildDa
 		operationLogClients: make(map[string]chan map[string]interface{}),
 		simpleLogBuffer:     make([]map[string]interface{}, 0),
 		enhancedLogBuffer:   NewLogBuffer(10000), // Store up to 10,000 enhanced log entries
+		sessionStore:        sessionStore,
 	}
 
 	// Initialize Langfuse client
@@ -880,6 +921,10 @@ func (s *Server) setupRoutes() {
 
 		// Avi API proxy (for direct API access)
 		api.Any("/avi/*path", s.handleAviProxy)
+
+		// Session management (delete is called via plain fetch, not htmx —
+		// see initializeSessionRail in app.js)
+		api.DELETE("/sessions/:id", s.handleDeleteSession)
 	}
 
 	// HTMX specific routes
@@ -888,6 +933,13 @@ func (s *Server) setupRoutes() {
 		htmx.POST("/chat", s.handleHTMXChat)
 		htmx.GET("/models", s.handleHTMXModels)
 		htmx.GET("/history", s.handleHTMXHistory)
+
+		// Session rail: list/create/load. "sessions" GET is an alias for
+		// "history" (same handler) so the route names match the design plan
+		// while keeping one implementation.
+		htmx.GET("/sessions", s.handleHTMXHistory)
+		htmx.POST("/sessions", s.handleCreateSession)
+		htmx.GET("/sessions/:id", s.handleGetSessionMessages)
 	}
 }
 
@@ -933,14 +985,22 @@ func (s *Server) handleIndex(c *gin.Context) {
 		tenant = "admin"
 	}
 
+	sessions, err := s.sessionStore.List()
+	if err != nil {
+		s.logger.Error("Failed to list sessions", zap.Error(err))
+	}
+	activeSessionID, _ := c.Cookie(activeSessionCookie)
+
 	c.HTML(http.StatusOK, "index.html", gin.H{
-		"title":        "VMware Avi LLM Agent",
-		"models":       models,
-		"defaultModel": defaultModel,
-		"version":      s.version,
-		"buildDate":    s.buildDate,
-		"tenant":       tenant,
-		"toolCount":    toolCount,
+		"title":           "VMware Avi LLM Agent",
+		"models":          models,
+		"defaultModel":    defaultModel,
+		"version":         s.version,
+		"buildDate":       s.buildDate,
+		"tenant":          tenant,
+		"toolCount":       toolCount,
+		"sessions":        sessions,
+		"activeSessionID": activeSessionID,
 	})
 }
 
@@ -1166,6 +1226,8 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"timestamp": timestamp,
 	})
 
+	sessionID := s.getOrCreateActiveSession(c, model)
+
 	// Process the chat message
 	ctx, cancel := context.WithTimeout(contextWithTurn(c.Request.Context(), turnID), 60*time.Second)
 	defer cancel()
@@ -1195,7 +1257,26 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	
 	// Check if the response contains tool execution errors
 	hasToolErrors := strings.Contains(response.Message, "❌")
-	
+
+	if sessionID != "" {
+		toolNames := make([]string, 0, len(response.ToolCalls))
+		for _, tc := range response.ToolCalls {
+			toolNames = append(toolNames, tc.Function.Name)
+		}
+		now := time.Now()
+		if err := s.sessionStore.AppendMessage(sessionID, ChatMessage{
+			ID: uuid.New().String(), Role: "user", Content: message, Timestamp: now,
+		}); err != nil {
+			s.logger.Error("Failed to persist user message", zap.Error(err))
+		}
+		if err := s.sessionStore.AppendMessage(sessionID, ChatMessage{
+			ID: uuid.New().String(), Role: "assistant", Content: assistantMessage,
+			Timestamp: now, Model: response.Model, ToolCalls: toolNames,
+		}); err != nil {
+			s.logger.Error("Failed to persist assistant message", zap.Error(err))
+		}
+	}
+
 	// Render the response as HTML
 	s.broadcastOperationLog("info", "HTMX response ready", map[string]interface{}{
 		"message": message,
@@ -1654,23 +1735,99 @@ func (s *Server) handleValidateModel(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"valid": valid})
 }
 
-// handleChatHistory returns chat history (placeholder implementation)
+// handleChatHistory returns the session list as JSON, for API consumers.
 func (s *Server) handleChatHistory(c *gin.Context) {
-	// For now, return empty history
-	// In a real implementation, you'd store and retrieve chat sessions
-	c.JSON(http.StatusOK, gin.H{"sessions": []ChatSession{}})
+	sessions, err := s.sessionStore.List()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"sessions": sessions})
 }
 
-// handleHTMXHistory returns history for HTMX (placeholder)
+// handleHTMXHistory renders the session rail's list of sessions. It also
+// backs the "GET /htmx/sessions" alias (see setupRoutes) and is what the
+// rail's JS re-fetches after creating or deleting a session.
 func (s *Server) handleHTMXHistory(c *gin.Context) {
+	sessions, err := s.sessionStore.List()
+	if err != nil {
+		s.logger.Error("Failed to list sessions", zap.Error(err))
+		sessions = nil
+	}
+	activeSessionID, _ := c.Cookie(activeSessionCookie)
 	c.HTML(http.StatusOK, "history.html", gin.H{
-		"sessions": []ChatSession{},
+		"sessions":        sessions,
+		"activeSessionID": activeSessionID,
 	})
 }
 
-// handleClearHistory clears chat history (placeholder)
+// handleClearHistory deletes every stored session (there is no per-session
+// delete here; see handleDeleteSession for that).
 func (s *Server) handleClearHistory(c *gin.Context) {
+	if err := s.sessionStore.DeleteAll(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	clearActiveSessionCookie(c)
 	c.JSON(http.StatusOK, gin.H{"message": "History cleared"})
+}
+
+// handleCreateSession starts a new, empty session (the rail's "New session"
+// button), makes it the active session via cookie, and returns the refreshed
+// session list so the caller can swap it straight into the rail.
+func (s *Server) handleCreateSession(c *gin.Context) {
+	defaultModel := s.config.LLM.DefaultModel
+	if s.config.Provider == "python" {
+		defaultModel = s.config.Mistral.DefaultModel
+	}
+
+	session, err := s.sessionStore.Create(defaultModel)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	setActiveSessionCookie(c, session.ID)
+
+	sessions, err := s.sessionStore.List()
+	if err != nil {
+		s.logger.Error("Failed to list sessions", zap.Error(err))
+		sessions = nil
+	}
+	c.HTML(http.StatusOK, "history.html", gin.H{
+		"sessions":        sessions,
+		"activeSessionID": session.ID,
+	})
+}
+
+// handleGetSessionMessages loads one session's full history and renders it
+// for the conversation pane (the rail item's click target), making it the
+// active session.
+func (s *Server) handleGetSessionMessages(c *gin.Context) {
+	id := c.Param("id")
+	session, err := s.sessionStore.Get(id)
+	if err != nil {
+		c.String(http.StatusNotFound, "Session not found")
+		return
+	}
+	setActiveSessionCookie(c, id)
+	c.HTML(http.StatusOK, "session_messages.html", gin.H{
+		"messages": session.Messages,
+	})
+}
+
+// handleDeleteSession deletes one session. Called via a plain fetch from the
+// rail's delete button (see initializeSessionRail in app.js), not htmx, so it
+// stays under /api and returns JSON rather than a page fragment.
+func (s *Server) handleDeleteSession(c *gin.Context) {
+	id := c.Param("id")
+	if err := s.sessionStore.Delete(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if activeID, _ := c.Cookie(activeSessionCookie); activeID == id {
+		clearActiveSessionCookie(c)
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }
 
 // handleHealth returns health status

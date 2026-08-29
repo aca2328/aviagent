@@ -17,6 +17,7 @@ type Config struct {
 	Mistral   MistralConfig   `mapstructure:"mistral"`
 	Langfuse  LangfuseConfig  `mapstructure:"langfuse"`
 	Log       LogConfig       `mapstructure:"log"`
+	Sessions  SessionsConfig  `mapstructure:"sessions"`
 	Provider  string          `mapstructure:"provider"` // "ollama" or "python" (Python uses official Mistral SDK)
 }
 
@@ -87,6 +88,11 @@ type LogConfig struct {
 	Format string `mapstructure:"format"`
 }
 
+// SessionsConfig holds chat session persistence configuration
+type SessionsConfig struct {
+	Dir string `mapstructure:"dir"` // directory of one JSONL file per session
+}
+
 // Load loads configuration from file and environment variables
 func Load(configPath string) (*Config, error) {
 	// Set default values
@@ -128,6 +134,8 @@ func Load(configPath string) (*Config, error) {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "json")
 
+	viper.SetDefault("sessions.dir", "data/sessions")
+
 	// Set environment variable bindings
 	viper.SetEnvPrefix("AVI_AGENT")
 	viper.AutomaticEnv()
@@ -168,6 +176,8 @@ func Load(configPath string) (*Config, error) {
 
 	viper.BindEnv("log.level", "LOG_LEVEL")
 	viper.BindEnv("log.format", "LOG_FORMAT")
+
+	viper.BindEnv("sessions.dir", "SESSIONS_DIR")
 
 	viper.BindEnv("provider", "LLM_PROVIDER")
 

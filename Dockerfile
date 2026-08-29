@@ -83,9 +83,12 @@ COPY --from=node-builder /app/mcp-avi-server /opt/avi-mcp-server
 # Copy web assets
 COPY web /web
 
-# Set permissions
+# Set permissions. /web/data/sessions is pre-created (rather than left for
+# the app's os.MkdirAll to create at runtime) so its ownership is right when
+# a fresh named volume is first mounted there — Docker seeds a new volume
+# from whatever already exists in the image at that path, root:root included.
 RUN chmod +x /usr/local/bin/aviagent \
-    && mkdir -p /etc/aviagent \
+    && mkdir -p /etc/aviagent /web/data/sessions \
     && chown -R 1000:1000 /web /etc/aviagent /opt/avi-mcp-server
 
 # Create non-root user

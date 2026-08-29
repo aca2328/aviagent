@@ -1,0 +1,21 @@
+{{if .sessions}}
+<div class="rail-sessions" id="session-rail-list">
+    {{range .sessions}}
+    <div class="rail-session-item{{if eq .ID $.activeSessionID}} is-active{{end}}">
+        <button type="button" class="rail-session-link" hx-get="/htmx/sessions/{{.ID}}" hx-target="#chat-messages" hx-swap="innerHTML">
+            <span class="rail-session-title">{{.Title}}</span>
+            <span class="rail-session-meta">{{.Created.Format "Jan 2, 15:04"}}</span>
+        </button>
+        <button type="button" class="rail-session-delete" data-session-id="{{.ID}}" aria-label="Delete session" title="Delete session">
+            <i class="ph ph-trash"></i>
+        </button>
+    </div>
+    {{end}}
+</div>
+{{else}}
+<div class="rail-empty" id="session-rail-list">
+    <i class="ph ph-clock-counter-clockwise"></i>
+    <div class="rail-empty-title">No sessions yet</div>
+    <div class="rail-empty-copy">Your conversations will be listed here and kept for 30 days.</div>
+</div>
+{{end}}

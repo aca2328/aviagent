@@ -577,29 +577,92 @@ function initializePromptButtons() {
     });
 }
 
+// Session rail (Phase 4): "New session" creates a session server-side (via
+// POST /htmx/sessions, which also sets the active_session_id cookie) and
+// refreshes the rail list; clicking a session loads its history via htmx
+// (hx-get on .rail-session-link, in history.html); delete is a plain fetch
+// since it's just a DOM removal, not a page swap.
+function replaceSessionRailList(html) {
+    const railList = document.getElementById('session-rail-list');
+    if (!railList) return;
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = html.trim();
+    const newList = wrapper.firstElementChild;
+    if (!newList) return;
+    railList.replaceWith(newList);
+    if (window.htmx) window.htmx.process(newList);
+}
+
+function initializeSessionRail() {
+    const newSessionButton = document.getElementById('new-session-btn');
+    const rail = document.getElementById('session-rail');
+    if (!rail) return;
+
+    if (newSessionButton) {
+        newSessionButton.addEventListener('click', function() {
+            resetToEmptyState();
+            fetch('/htmx/sessions', { method: 'POST' })
+                .then(function(r) { return r.text(); })
+                .then(replaceSessionRailList)
+                .catch(function() { /* rail refresh is best-effort */ });
+        });
+    }
+
+    rail.addEventListener('click', function(e) {
+        const link = e.target.closest('.rail-session-link');
+        if (link) {
+            rail.querySelectorAll('.rail-session-item.is-active').forEach(function(el) {
+                el.classList.remove('is-active');
+            });
+            const item = link.closest('.rail-session-item');
+            if (item) item.classList.add('is-active');
+            return;
+        }
+
+        const deleteBtn = e.target.closest('.rail-session-delete');
+        if (!deleteBtn) return;
+        const sessionId = deleteBtn.dataset.sessionId;
+        const item = deleteBtn.closest('.rail-session-item');
+        const wasActive = !!(item && item.classList.contains('is-active'));
+        fetch('/api/sessions/' + encodeURIComponent(sessionId), { method: 'DELETE' })
+            .then(function() {
+                if (item) item.remove();
+                if (wasActive) resetToEmptyState();
+            })
+            .catch(function() { /* best-effort */ });
+    });
+}
+
+// Cached at load time (see DOMContentLoaded below) because loading a past
+// session's history replaces #chat-messages' entire innerHTML, permanently
+// detaching the #empty-state node from the document. Keeping the actual node
+// (not a re-parsed HTML string) means its prompt-button listeners, bound
+// once by initializePromptButtons, still work after it's reattached.
+let emptyStateNode = null;
+
 function resetToEmptyState() {
     const chatMessages = document.getElementById('chat-messages');
     if (!chatMessages) return;
-    const emptyState = document.getElementById('empty-state');
     chatMessages.innerHTML = '';
-    if (emptyState) {
-        chatMessages.appendChild(emptyState);
+    if (emptyStateNode) {
+        chatMessages.appendChild(emptyStateNode);
     }
 }
 
 // Initialize when DOM is loaded
 document.addEventListener('DOMContentLoaded', function() {
+    emptyStateNode = document.getElementById('empty-state');
     displayVersionInfo();
     initializeDiagramDownload();
     initializeTooltips();
     initializeTraceFiltering();
     initializeTurnChipLinking();
     initializePromptButtons();
+    initializeSessionRail();
 
     const messageInput = document.getElementById('message-input');
     const chatForm = document.getElementById('chat-form');
     const clearChatButton = document.getElementById('clear-chat');
-    const newSessionButton = document.getElementById('new-session-btn');
     const exportChatButton = document.getElementById('export-chat');
 
     if (messageInput) {
@@ -615,10 +678,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 resetToEmptyState();
             }
         });
-    }
-
-    if (newSessionButton) {
-        newSessionButton.addEventListener('click', resetToEmptyState);
     }
 
     if (chatForm) {

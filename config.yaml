@@ -54,4 +54,7 @@ log:
   level: "info"
   format: "json"
 
+sessions:
+  dir: "data/sessions" # one JSONL file per session; kept for 30 days
+
 provider: "python"

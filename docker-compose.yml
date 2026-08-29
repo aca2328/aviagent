@@ -52,8 +52,12 @@ services:
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_FORMAT=${LOG_FORMAT:-json}
+
+      # Chat session persistence (one JSONL file per session, 30-day expiry)
+      - SESSIONS_DIR=${SESSIONS_DIR:-/web/data/sessions}
     volumes:
       - ./config.yaml:/etc/aviagent/config.yaml:ro
+      - aviagent-sessions:/web/data/sessions
     networks:
       - avi-network
     restart: unless-stopped
@@ -84,3 +88,6 @@ services:
 networks:
   avi-network:
     driver: bridge
+
+volumes:
+  aviagent-sessions:
