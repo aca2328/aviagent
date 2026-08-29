@@ -6,11 +6,15 @@ A Go-based web agent that allows users to interact with the VMware Avi Load Bala
 
 ### 🚀 Core Functionality
 - **Natural Language Interface**: Chat with your Avi Load Balancer using plain English
-- **Complete API Coverage**: All VMware ALB SDK endpoints implemented
-- **LLM Integration**: Powered by Ollama with support for multiple models (llama3, mistral, codellama, etc.)
-- **Real-time Chat UI**: Modern web interface built with HTMX and Bootstrap
-- **Multi-turn Conversations**: Maintains context for follow-up questions
+- **Complete API Coverage**: 170+ Avi object types via a generic MCP tool set (list/get/create/update/patch/delete/action), plus a static fallback tool set for when MCP is unavailable
+- **LLM Integration**: Mistral AI (recommended/default) or Ollama, with support for multiple models
+- **Real-time Chat UI**: Three-column layout (session history / conversation / live trace inspector) built with HTMX and a dark, Nocturne-themed design system
+- **Chat History**: Conversations persist to disk (30-day retention) and are listed in the session rail — pick up a past conversation, or start fresh
 - **Tool Definitions**: Comprehensive function definitions for accurate API mapping
+
+### 🔒 Safety Features
+- **Read-only by default**: every new conversation starts read-only — the assistant can look things up, but any create/update/delete/scale attempt is blocked and shown as a confirmation card (what it would have sent) instead of being applied
+- **Explicit unlock**: switch a conversation to read-write from the composer (with a confirmation prompt), or approve one blocked action at a time via its card's "Unlock and apply" button — the server re-checks the mode itself rather than trusting the browser
 
 ### 🛠 Technical Features
 - **Go Backend**: High-performance web server using Gin framework
@@ -19,6 +23,8 @@ A Go-based web agent that allows users to interact with the VMware Avi Load Bala
 - **Error Handling**: Robust error handling and user-friendly error messages
 - **Health Monitoring**: Built-in health checks and status monitoring
 - **Logging**: Structured logging with configurable levels
+- **Live Trace Panel**: every LLM call and Avi API call streams into an inspector panel in real time, grouped per conversation turn, with a "Copy as curl" for replaying any request
+- **Structured Result Tables**: virtual service, pool, health monitor and service engine results render as scannable tables (with the raw JSON always one click away), instead of a wall of JSON
 
 ### 📊 Supported Operations
 - **Virtual Services**: List, create, update, delete, scale, migrate, switchover
@@ -283,10 +289,16 @@ go build -o aviagent ./cmd/server
 ## 🎯 Usage Guide
 
 ### 🌐 Web Interface
-1. **Login**: Access `http://localhost:8088` in your browser
-2. **Model Selection**: Choose your preferred LLM model from the dropdown
-3. **Quick Actions**: Use predefined queries from the sidebar
-4. **Natural Language**: Type your questions in the chat input
+1. **Open**: Access `http://localhost:8088` in your browser
+2. **Model Selection**: Choose your preferred LLM model from the top bar
+3. **Quick Actions**: Use the starter prompts on the empty-state screen, or type your own question
+4. **Read-only / Read-write**: the composer's toggle controls whether the assistant may write to the Avi controller (default: read-only — see **Safety Features** above)
+5. **Trace Inspector**: the right-hand panel shows every LLM and Avi API call as it happens; click a message's `N tools · Dms · M objects` chip to isolate that turn's steps in the panel, or click a step to jump back to its message
+6. **Session History**: the left rail lists past conversations (kept 30 days) — click one to reload it, or start a **New session**
+
+### 💬 Session History & the Trace Panel
+
+Every conversation is saved as it happens and listed in the left rail, newest first, titled from its first message. Sessions expire automatically after 30 days. The right-hand trace panel streams every step of the current turn (LLM call, each tool call, results) in real time; the segmented filter (All / LLM / Avi / Errors) and search narrow the stream, and clicking a message's summary chip narrows it further to just that message's turn.
 
 ### 💬 Example Queries
 
@@ -328,6 +340,8 @@ curl -X POST http://localhost:8088/api/chat \
   -H "Content-Type: application/json" \
   -d '{"message": "Show details for virtual service vs-web-01", "model": "mistral"}'
 ```
+
+> **Note:** `/api/chat` doesn't create or use a session, so it's always read-only — a write request comes back as a blocked-write result with no way to unlock it from this endpoint. Use the web UI (which does track a session and its read-only/read-write mode) for anything that needs to write to the controller.
 
 #### Avi API Proxy
 ```bash
@@ -404,6 +418,10 @@ mistral:
 log:
   level: "info"
   format: "json"
+
+# Chat session persistence
+sessions:
+  dir: "data/sessions" # one JSONL file per session; kept for 30 days
 ```
 
 ### Environment Variables
@@ -428,6 +446,9 @@ export MISTRAL_API_KEY="your-mistral-api-key"
 export LOG_LEVEL="debug"
 export GIN_MODE="release"
 export SERVER_PORT=8088
+
+# Chat session persistence
+export SESSIONS_DIR="data/sessions"
 ```
 
 ### LLM Provider Selection
@@ -578,12 +599,22 @@ curl https://api.mistral.ai/v1/models \
 
 ### Session Management
 ```bash
-# Get chat history
+# List all saved sessions (id, title, model, created)
 curl http://localhost:8088/api/chat/history
 
-# Clear chat history
+# Delete every saved session
 curl -X DELETE http://localhost:8088/api/chat/history
+
+# Delete one session by id (also used by the rail's per-session delete button)
+curl -X DELETE http://localhost:8088/api/sessions/<session-id>
+
+# Switch a session to read-write (or back to read-only)
+curl -X POST http://localhost:8088/api/sessions/<session-id>/mode \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"read-write"}'
 ```
+
+Sessions live as one JSONL file per session under `sessions.dir` in `config.yaml` (default `data/sessions`; override with the `SESSIONS_DIR` env var) and expire automatically after 30 days. In Docker, this directory is a named volume (`aviagent-sessions`) so history survives `docker-compose ... up -d --build`.
 
 ### Health Monitoring
 ```bash
