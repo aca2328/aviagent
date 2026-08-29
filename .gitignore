@@ -68,6 +68,11 @@ build/
 *.dll
 *.so
 *.dylib
+/aviagent
+
+# Python build outputs
+__pycache__/
+*.pyc
 
 # Go test outputs
 *.test
