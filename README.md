@@ -1,1318 +1,199 @@
 # VMware Avi Load Balancer LLM Agent
 
-A Go-based web agent that allows users to interact with the VMware Avi Load Balancer API via natural language, powered by an Ollama-hosted LLM. The solution is containerized in a single Docker image with a multi-stage build, using Gin for the web server and HTMX for the chat UI.
+A Go web agent that lets you manage a VMware Avi (NSX ALB) Load Balancer in plain English. Gin serves both a JSON API and an HTMX-based chat UI; an LLM (Mistral AI or Ollama) turns your questions into calls against the Avi Controller REST API, covering 170+ object types through a generic MCP tool set. Every write is blocked by default until you explicitly unlock it.
 
 ## Features
 
-### 🚀 Core Functionality
-- **Natural Language Interface**: Chat with your Avi Load Balancer using plain English
-- **Complete API Coverage**: 170+ Avi object types via a generic MCP tool set (list/get/create/update/patch/delete/action), plus a static fallback tool set for when MCP is unavailable
-- **LLM Integration**: Mistral AI (recommended/default) or Ollama, with support for multiple models
-- **Real-time Chat UI**: Three-column layout (session history / conversation / live trace inspector) built with HTMX and a dark, Nocturne-themed design system
-- **Chat History**: Conversations persist to disk (30-day retention) and are listed in the session rail — pick up a past conversation, or start fresh
-- **Tool Definitions**: Comprehensive function definitions for accurate API mapping
+- **Natural language interface** — ask about virtual services, pools, health monitors, service engines and analytics in plain English
+- **Comprehensive API coverage** — 170+ Avi object types via a generic MCP tool set (list/get/create/update/patch/delete/action), with a static fallback tool set for when MCP is unavailable
+- **Mistral AI or Ollama** — Mistral is the recommended default (more reliable tool-calling); Ollama works for local/offline use
+- **Three-column UI** — session history, conversation, and a live trace inspector showing every LLM and Avi API call as it happens, correlated per conversation turn
+- **Read-only by default** — every new conversation starts read-only; any create/update/delete/scale attempt is blocked and shown as a confirmation card (what it would have sent) instead of being applied. Unlock a whole session from the composer, or approve one blocked action at a time — the server re-checks the mode itself rather than trusting the browser
+- **Persistent chat history** — conversations save to disk and are listed in the session rail, kept for 30 days
+- **Structured result tables** — virtual service, pool, health monitor and service engine results render as scannable tables, with the raw JSON always one click away
 
-### 🔒 Safety Features
-- **Read-only by default**: every new conversation starts read-only — the assistant can look things up, but any create/update/delete/scale attempt is blocked and shown as a confirmation card (what it would have sent) instead of being applied
-- **Explicit unlock**: switch a conversation to read-write from the composer (with a confirmation prompt), or approve one blocked action at a time via its card's "Unlock and apply" button — the server re-checks the mode itself rather than trusting the browser
+## Quick Start
 
-### 🛠 Technical Features
-- **Go Backend**: High-performance web server using Gin framework
-- **Docker Containerized**: Multi-stage build for optimized production images
-- **Authentication**: Secure session management with VMware Avi controllers
-- **Error Handling**: Robust error handling and user-friendly error messages
-- **Health Monitoring**: Built-in health checks and status monitoring
-- **Logging**: Structured logging with configurable levels
-- **Live Trace Panel**: every LLM call and Avi API call streams into an inspector panel in real time, grouped per conversation turn, with a "Copy as curl" for replaying any request
-- **Structured Result Tables**: virtual service, pool, health monitor and service engine results render as scannable tables (with the raw JSON always one click away), instead of a wall of JSON
+Requires Docker and Docker Compose, and access to an Avi Controller.
 
-### 📊 Supported Operations
-- **Virtual Services**: List, create, update, delete, scale, migrate, switchover
-- **Pools**: Manage backend pools, scale out/in, health monitoring
-- **Service Engines**: Monitor status, performance, and configuration
-- **Health Monitors**: Configure and manage health checks
-- **Analytics**: Retrieve performance metrics and monitoring data
-
-## 🚀 Quick Start
-
-**New!** We now provide convenient startup scripts to get you running quickly:
-
-- `start-mistral.sh` - For production setup with Mistral AI
-- `start-ollama.sh` - For development setup with Ollama
-
-These scripts guide you through the configuration process and start the application with the correct settings.
-
-### 📋 Prerequisites
-- **Docker** (v20.10+) and **Docker Compose** (v1.29+)
-- Access to a **VMware Avi Load Balancer controller** (v21.1+ recommended)
-- **Mistral AI API Key** (for production) or **Ollama** service (for development)
-- Minimum **4GB RAM** and **2 CPU cores** for development
-
-### 💻 System Requirements
-| Component | Minimum | Recommended |
-|-----------|---------|-------------|
-| CPU | 2 cores | 4+ cores |
-| RAM | 4GB | 8GB+ |
-| Disk | 10GB | 20GB+ (for LLM models) |
-| Docker | v20.10+ | Latest stable |
-
-### 1️⃣ Clone the Repository
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/aviagent.git
+git clone https://github.com/aca2328/aviagent.git
 cd aviagent
 
-# Check out the latest stable version
-git checkout v1.0.0
-```
-
-### 2️⃣ Quick Start with Startup Scripts
-
-We provide convenient startup scripts to simplify the setup process:
-
-#### Option A: Start with Mistral AI (Production Recommended)
-```bash
-# Make the script executable
-chmod +x start-mistral.sh
-
-# Run the interactive setup
+# Interactive setup — prompts for your Mistral API key and Avi credentials
 ./start-mistral.sh
 
-# Follow the prompts to enter your Mistral API key and Avi credentials
-```
-
-#### Option B: Start with Ollama (Development Recommended)
-```bash
-# Make the script executable
-chmod +x start-ollama.sh
-
-# Run the interactive setup
+# Or for local/offline use with Ollama instead
 ./start-ollama.sh
-
-# Follow the prompts to enter your Avi credentials
 ```
 
-The startup scripts will:
-- ✅ Check Docker and Docker Compose installation
-- ✅ Gather your configuration interactively
-- ✅ Create a proper `.env` file
-- ✅ Start the application with the correct provider
-- ✅ Provide access instructions
+Both scripts write a `.env` file and start the app with `docker-compose`. Open `http://localhost:8088` once it's up.
 
-**⚠️ Security Note:** The scripts create a `.env` file with sensitive credentials. Never commit this file to version control!
+**Manual setup**, if you'd rather not use the scripts:
 
-### 3️⃣ Manual Configuration (Advanced)
-
-If you prefer manual configuration, create a `.env` file:
 ```bash
 cp .env.example .env
-nano .env
-```
+# edit .env: set AVI_HOST/AVI_USERNAME/AVI_PASSWORD, and either
+# MISTRAL_API_KEY (LLM_PROVIDER=python) or leave it for Ollama
 
-Example `.env` file for **Mistral AI**:
-```env
-# LLM Provider Configuration
-LLM_PROVIDER=mistral
+docker-compose --env-file .env up -d --scale ollama=0   # Mistral, no Ollama container
+docker-compose --env-file .env up -d                    # Ollama, includes the Ollama service
 
-# Mistral AI Configuration
-MISTRAL_API_KEY=your-mistral-api-key
-MISTRAL_API_BASE_URL=https://api.mistral.ai
-MISTRAL_DEFAULT_MODEL=mistral-medium
-MISTRAL_MODELS=mistral-tiny,mistral-small,mistral-medium
-
-# Avi Load Balancer Configuration
-AVI_HOST=avi-controller.example.com
-AVI_USERNAME=admin
-AVI_PASSWORD=your-secure-password
-AVI_VERSION=31.2.1
-AVI_TENANT=admin
-
-# Application Configuration
-LOG_LEVEL=info
-SERVER_PORT=8088
-```
-
-Example `.env` file for **Ollama**:
-```env
-# LLM Provider Configuration
-LLM_PROVIDER=ollama
-
-# Ollama Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_DEFAULT_MODEL=llama3.2
-OLLAMA_MODELS=llama3.2,mistral,codellama
-
-# Avi Load Balancer Configuration
-AVI_HOST=avi-controller.example.com
-AVI_USERNAME=admin
-AVI_PASSWORD=your-secure-password
-AVI_VERSION=31.2.1
-AVI_TENANT=admin
-
-# Application Configuration
-LOG_LEVEL=info
-SERVER_PORT=8088
-```
-
-### 4️⃣ Start Services
-
-#### With Mistral AI (no Ollama service):
-```bash
-# Start with Mistral AI
-docker-compose --env-file .env up -d --scale ollama=0
-```
-
-#### With Ollama (includes Ollama service):
-```bash
-# Start with Ollama
-docker-compose --env-file .env up -d
-
-# Start with monitoring stack (Prometheus + Grafana)
-docker-compose --profile monitoring up -d
-```
-
-#### View service status:
-```bash
-# View service status
-docker-compose ps
-
-# Check application health
 curl http://localhost:8088/api/health
 ```
 
-### 4️⃣ Pull LLM Models
-```bash
-# Pull required LLM models (this may take several minutes)
-docker-compose exec ollama ollama pull llama3.2
-docker-compose exec ollama ollama pull mistral
-docker-compose exec ollama ollama pull codellama
+> **Docker is the only supported way to run this app** — there's no supported `go run`/binary path. See `Development` below for building and testing without running it.
 
-# Verify models are available
-docker-compose exec ollama ollama list
+## Usage
+
+1. **Open** `http://localhost:8088`.
+2. **Pick a model** from the top bar.
+3. **Ask a question**, or use a starter prompt on the empty-state screen.
+4. **Read-only / Read-write**: the composer's toggle controls whether the assistant may write to the controller (default: read-only).
+5. **Trace inspector** (right panel): every LLM and Avi API call streams in live. Click a message's `N tools · Dms · M objects` chip to isolate that turn's steps; click a step to jump back to its message.
+6. **Session history** (left rail): past conversations are listed newest-first, titled from their first message, and kept for 30 days. Click one to reload it, or start a **New session**.
+
+### Example queries
+
 ```
-
-### 5️⃣ Access the Application
-- **Web Interface**: `http://localhost:8088`
-- **API Documentation**: `http://localhost:8088/api/docs`
-- **Health Check**: `http://localhost:8088/api/health`
-- **Monitoring** (if enabled): `http://localhost:3000` (Grafana)
-
-### 6️⃣ Verify Installation
-```bash
-# Check application health
-curl -s http://localhost:8088/api/health | jq .
-
-# Check Avi controller connection
-curl -s http://localhost:8088/api/health | jq .avi_status
-
-# Check LLM service connection  
-curl -s http://localhost:8088/api/health | jq .llm_status
-```
-
-## 📦 Installation Options
-
-### Option A: Docker with Ollama (Recommended for Development)
-```bash
-# Build and run with Docker using Ollama
-docker build -t aviagent:latest .
-docker run -d -p 8088:8088 \
-  -e AVI_HOST=your-avi-controller \
-  -e AVI_USERNAME=admin \
-  -e AVI_PASSWORD=your-password \
-  -e LLM_PROVIDER=ollama \
-  -e OLLAMA_HOST=http://host.docker.internal:11434 \
-  --name aviagent \
-  aviagent:latest
-```
-
-### Option B: Docker with Mistral AI (Recommended for Production)
-```bash
-# Build and run with Docker using Mistral AI
-docker build -t aviagent:latest .
-docker run -d -p 8088:8088 \
-  -e AVI_HOST=your-avi-controller \
-  -e AVI_USERNAME=admin \
-  -e AVI_PASSWORD=your-password \
-  -e LLM_PROVIDER=mistral \
-  -e MISTRAL_API_KEY=your-mistral-api-key \
-  --name aviagent \
-  aviagent:latest
-```
-
-### Option B: Binary Installation
-```bash
-# Download pre-built binary (replace version as needed)
-wget https://github.com/your-org/aviagent/releases/download/v1.0.0/aviagent-linux-amd64
-chmod +x aviagent-linux-amd64
-mv aviagent-linux-amd64 /usr/local/bin/aviagent
-
-# Create configuration file
-nano /etc/aviagent/config.yaml
-
-# Start the service
-aviagent -config /etc/aviagent/config.yaml
-```
-
-### Option C: Docker Compose (Full Stack)
-
-#### Using Ollama (Development)
-```bash
-# Start with Ollama (includes Ollama service)
-docker-compose up -d
-
-# Or explicitly specify Ollama
-docker-compose up -d -e LLM_PROVIDER=ollama
-```
-
-#### Using Mistral AI (Production)
-```bash
-# Start with Mistral AI (no Ollama service needed)
-docker-compose up -d -e LLM_PROVIDER=mistral -e MISTRAL_API_KEY=your-api-key
-
-# Scale the application
-docker-compose up -d --scale avi-llm-agent=2 -e LLM_PROVIDER=mistral -e MISTRAL_API_KEY=your-api-key
-```
-
-### Option D: From Source
-```bash
-# Install Go 1.21+
-sudo apt-get install golang-go
-
-# Build from source
-go mod download
-go build -o aviagent ./cmd/server
-
-# Run the application
-./aviagent -config config.yaml
-```
-
-## 🎯 Usage Guide
-
-### 🌐 Web Interface
-1. **Open**: Access `http://localhost:8088` in your browser
-2. **Model Selection**: Choose your preferred LLM model from the top bar
-3. **Quick Actions**: Use the starter prompts on the empty-state screen, or type your own question
-4. **Read-only / Read-write**: the composer's toggle controls whether the assistant may write to the Avi controller (default: read-only — see **Safety Features** above)
-5. **Trace Inspector**: the right-hand panel shows every LLM and Avi API call as it happens; click a message's `N tools · Dms · M objects` chip to isolate that turn's steps in the panel, or click a step to jump back to its message
-6. **Session History**: the left rail lists past conversations (kept 30 days) — click one to reload it, or start a **New session**
-
-### 💬 Session History & the Trace Panel
-
-Every conversation is saved as it happens and listed in the left rail, newest first, titled from its first message. Sessions expire automatically after 30 days. The right-hand trace panel streams every step of the current turn (LLM call, each tool call, results) in real time; the segmented filter (All / LLM / Avi / Errors) and search narrow the stream, and clicking a message's summary chip narrows it further to just that message's turn.
-
-### 💬 Example Queries
-
-#### Basic Information
-```
-"What are the current virtual services?"
-"Show me all pools with their health status"
-"List service engines that are down"
+"List all virtual services"
+"Which pools have no health monitor?"
+"Show SE groups and their capacity"
 "Get analytics for the last hour"
+"Scale out the backend pool for app1 to 5 servers"    # blocked unless the session is read-write
 ```
 
-#### Management Operations
-```
-"Create a new virtual service for my web application"
-"Scale out the backend pool for app1 to 5 servers"
-"Add server 10.1.1.100 to the web-pool"
-"Enable SSL for the api-virtualservice"
-```
+## Configuration
 
-#### Monitoring and Troubleshooting
-```
-"Show me performance metrics for vs-web"
-"Which pools have unhealthy servers?"
-"Get connection statistics for the last 6 hours"
-"Show me service engines with high CPU usage"
-```
-
-### 🔧 Advanced Usage
-
-#### Direct API Access
-```bash
-# List virtual services via API
-curl -X POST http://localhost:8088/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "List all virtual services", "model": "llama3.2"}'
-
-# Get specific virtual service details
-curl -X POST http://localhost:8088/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "Show details for virtual service vs-web-01", "model": "mistral"}'
-```
-
-> **Note:** `/api/chat` doesn't create or use a session, so it's always read-only — a write request comes back as a blocked-write result with no way to unlock it from this endpoint. Use the web UI (which does track a session and its read-only/read-write mode) for anything that needs to write to the controller.
-
-#### Avi API Proxy
-```bash
-# Direct Avi API access (for advanced users)
-curl -X GET "http://localhost:8088/api/avi/virtualservice?limit_by=10" \
-  -H "Authorization: Bearer your-token"
-
-# Create virtual service via proxy
-curl -X POST "http://localhost:8088/api/avi/virtualservice" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "test-vs", "services": [{"port": 80}]}'
-```
-
-## 🛠 Configuration
-
-### Configuration File
-Create a `config.yaml` file:
+Settings load from `config.yaml`, then environment variables (which win on conflict). See `.env.example` for the full list; the essentials:
 
 ```yaml
-# Server Configuration
-server:
-  port: 8088
-  read_timeout: 30
-  write_timeout: 30
-  idle_timeout: 60
-
-# Avi Load Balancer Configuration
 avi:
   host: "avi-controller.example.com"
   username: "admin"
   password: "your-secure-password"
-  version: "31.2.1"
   tenant: "admin"
-  timeout: 30
-  insecure: false  # Set to true only for testing
-  auth_method: "session"  # "session" or "basic" - authentication method
+  auth_method: "session"  # "session" (recommended) or "basic"
 
-# LLM Provider Configuration (choose one)
-provider: "ollama"  # or "mistral"
+provider: "python"  # "python" (Mistral, recommended) or "ollama"
 
-# Avi Authentication Configuration
-# auth_method: "session" - Session-based authentication (recommended)
-# auth_method: "basic"   - HTTP Basic Authentication
-# Session-based auth requires login endpoint and returns session cookies
-# Basic auth sends credentials with each request in Authorization header
-
-# Ollama Configuration (used when provider: "ollama")
-llm:
-  ollama_host: "http://localhost:11434"
-  default_model: "llama3.2"
-  models:
-    - "llama3.2"
-    - "mistral"
-    - "codellama"
-  timeout: 60
-  temperature: 0.7
-  max_tokens: 2048
-
-# Mistral AI Configuration (used when provider: "mistral")
 mistral:
-  api_base_url: "https://api.mistral.ai"
   api_key: "your-mistral-api-key"
   default_model: "mistral-medium"
-  models:
-    - "mistral-tiny"
-    - "mistral-small"
-    - "mistral-medium"
-    - "mistral-large"
-  timeout: 60
-  temperature: 0.7
-  max_tokens: 2048
 
-# Logging Configuration
-log:
-  level: "info"
-  format: "json"
-
-# Chat session persistence
-sessions:
-  dir: "data/sessions" # one JSONL file per session; kept for 30 days
-```
-
-### Environment Variables
-The application supports environment variables for configuration:
-
-```bash
-# Avi Load Balancer
-export AVI_HOST="avi-controller.example.com"
-export AVI_USERNAME="admin"
-export AVI_PASSWORD="your-password"
-
-# LLM Provider (choose one)
-export LLM_PROVIDER="ollama"  # or "mistral"
-
-# Ollama Configuration
-export OLLAMA_HOST="http://localhost:11434"
-
-# Mistral AI Configuration
-export MISTRAL_API_KEY="your-mistral-api-key"
-
-# Application Settings
-export LOG_LEVEL="debug"
-export GIN_MODE="release"
-export SERVER_PORT=8088
-
-# Chat session persistence
-export SESSIONS_DIR="data/sessions"
-```
-
-### LLM Provider Selection
-
-The application supports two LLM providers:
-
-#### 🦙 Ollama (Default)
-- **Local/self-hosted** LLM service
-- **Open-source models** (Llama3, Mistral, CodeLlama, etc.)
-- **No API costs** - run models locally
-- **Best for**: Development, testing, private deployments
-
-#### 🤖 Mistral AI
-- **Cloud-based** LLM service
-- **Managed API** with enterprise-grade models
-- **Pay-as-you-go pricing**
-- **Best for**: Production, scalability, enterprise use
-
-#### Comparison
-
-| Feature | Ollama | Mistral AI |
-|---------|--------|------------|
-| **Hosting** | Self-hosted | Cloud-managed |
-| **Cost** | Free (local) | Pay-as-you-go |
-| **Models** | Open-source | Proprietary + Open-source |
-| **Setup** | Requires local setup | API key only |
-| **Scalability** | Limited by hardware | Highly scalable |
-| **Latency** | Low (local) | Higher (network) |
-| **Privacy** | Full control | Cloud-based |
-
-### Configuration Priority
-1. **Environment Variables** (highest priority)
-2. **Configuration File** (`config.yaml`)
-3. **Default Values** (lowest priority)
-
-## 🐳 Docker Administration
-
-### Provider Switching
-
-#### Switch from Ollama to Mistral AI
-```bash
-# Stop current services
-docker-compose down
-
-# Start with Mistral AI
-docker-compose up -d -e LLM_PROVIDER=mistral -e MISTRAL_API_KEY=your-api-key
-
-# Verify the switch
-curl http://localhost:8088/api/health | jq .provider
-```
-
-#### Switch from Mistral AI to Ollama
-```bash
-# Stop current services
-docker-compose down
-
-# Start with Ollama
-docker-compose up -d -e LLM_PROVIDER=ollama
-
-# Pull required models
-docker-compose exec ollama ollama pull llama3.2
-
-# Verify the switch
-curl http://localhost:8088/api/health | jq .provider
-```
-
-### Environment Variable Management
-
-#### Using .env file
-```bash
-# Create .env file for Mistral AI
-cat > .env << EOF
-LLM_PROVIDER=mistral
-MISTRAL_API_KEY=your-api-key
-AVI_HOST=your-avi-controller
-AVI_USERNAME=admin
-AVI_PASSWORD=your-password
-EOF
-
-# Start services
-docker-compose --env-file .env up -d
-```
-
-#### Using command line
-```bash
-# Start with environment variables
-docker-compose up -d \\
-  -e LLM_PROVIDER=mistral \\
-  -e MISTRAL_API_KEY=your-api-key \\
-  -e AVI_HOST=your-avi-controller
-```
-
-### Resource Management
-
-#### Memory and CPU Limits
-```bash
-# Limit resources for Avi Agent
-docker-compose up -d \\
-  --compatibility \\
-  -e LLM_PROVIDER=ollama \\
-  -e AVI_HOST=your-avi-controller
-
-# Or use docker run with limits
-docker run -d \\
-  --memory=2g \\
-  --cpus=2 \\
-  -p 8088:8088 \\
-  -e LLM_PROVIDER=mistral \\
-  -e MISTRAL_API_KEY=your-api-key \\
-  aviagent:latest
-```
-
-## 🔧 Administration
-
-### Model Management
-
-#### Ollama Models
-```bash
-# List available Ollama models
-curl http://localhost:8088/api/models
-
-# Validate a specific Ollama model
-curl -X POST http://localhost:8088/api/models/validate \
-  -H "Content-Type: application/json" \
-  -d '{"model": "llama3.2"}'
-
-# Add a new model to Ollama
-docker-compose exec ollama ollama pull new-model-name
-
-# List Ollama models directly
-docker-compose exec ollama ollama list
-```
-
-#### Mistral AI Models
-```bash
-# List available Mistral AI models
-curl http://localhost:8088/api/models
-
-# Validate a specific Mistral AI model
-curl -X POST http://localhost:8088/api/models/validate \
-  -H "Content-Type: application/json" \
-  -d '{"model": "mistral-small"}'
-
-# Get Mistral AI model information
-curl https://api.mistral.ai/v1/models \
-  -H "Authorization: Bearer $MISTRAL_API_KEY"
-```
-
-### Session Management
-```bash
-# List all saved sessions (id, title, model, created)
-curl http://localhost:8088/api/chat/history
-
-# Delete every saved session
-curl -X DELETE http://localhost:8088/api/chat/history
-
-# Delete one session by id (also used by the rail's per-session delete button)
-curl -X DELETE http://localhost:8088/api/sessions/<session-id>
-
-# Switch a session to read-write (or back to read-only)
-curl -X POST http://localhost:8088/api/sessions/<session-id>/mode \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"read-write"}'
-```
-
-Sessions live as one JSONL file per session under `sessions.dir` in `config.yaml` (default `data/sessions`; override with the `SESSIONS_DIR` env var) and expire automatically after 30 days. In Docker, this directory is a named volume (`aviagent-sessions`) so history survives `docker-compose ... up -d --build`.
-
-### Health Monitoring
-```bash
-# Check application health
-curl http://localhost:8088/api/health
-
-# Check specific component health
-curl http://localhost:8088/api/health?component=avi
-
-# Get detailed status
-curl -s http://localhost:8088/api/health | jq .
-```
-
-## 📊 Monitoring and Observability
-
-### Built-in Monitoring
-- **Health Endpoint**: `/api/health`
-- **Metrics Endpoint**: `/api/metrics` (if enabled)
-- **Logging**: Structured JSON logging to stdout
-
-### Prometheus Integration
-```yaml
-# Add to your prometheus.yml
-scrape_configs:
-  - job_name: 'aviagent'
-    scrape_interval: 15s
-    static_configs:
-      - targets: ['aviagent:8088']
-```
-
-### Grafana Dashboards
-Import the provided Grafana dashboard:
-```bash
-# Import dashboard
-curl -X POST http://localhost:3000/api/dashboards/import \
-  -H "Authorization: Bearer your-grafana-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{"dashboard": "$(cat monitoring/grafana/dashboard.json)", "overwrite": true}'
-```
-
-## 🐳 Docker Management
-
-### Common Docker Commands
-```bash
-# View logs
-docker-compose logs -f avi-llm-agent
-
-# Restart services
-docker-compose restart
-
-# Scale services
-docker-compose up -d --scale avi-llm-agent=2
-
-# Update services
-docker-compose pull
-docker-compose up -d --build
-
-# Cleanup
-docker-compose down -v
-```
-
-### Docker Health Checks
-```bash
-# Check container health
-docker inspect --format='{{json .State.Health}}' aviagent-avi-llm-agent-1
-
-# View health status
-docker ps --format "table {{.ID}}\t{{.Names}}\t{{.Status}}"
-```
-
-## 🔄 Upgrading
-
-### Upgrade Procedure
-```bash
-# 1. Backup your configuration
-cp config.yaml config.yaml.backup
-cp .env .env.backup
-
-# 2. Pull the latest code
-git pull origin main
-git checkout v1.1.0  # Check out specific version
-
-# 3. Update dependencies
-docker-compose pull
-
-# 4. Rebuild and restart
-docker-compose up -d --build
-
-# 5. Verify upgrade
-docker-compose logs -f --tail=50
-curl http://localhost:8088/api/health
-```
-
-### Version Compatibility
-| Avi Agent Version | Avi Controller Version | Ollama Version |
-|-------------------|-----------------------|----------------|
-| v1.0.x | 21.1 - 31.2.x | 0.1.0+ |
-| v1.1.x | 22.1+ | 0.1.20+ |
-
-## 🛑 Troubleshooting
-
-### Common Issues
-
-#### Connection to Avi Controller
-```bash
-# Test Avi controller connectivity
-curl -k https://your-avi-controller.com/login
-
-# Check SSL certificates
-openssl s_client -connect your-avi-controller.com:443 -showcerts
-
-# Verify credentials
-export AVI_HOST=your-avi-controller.com
-export AVI_USERNAME=admin
-export AVI_PASSWORD=your-password
-curl -u "$AVI_USERNAME:$AVI_PASSWORD" -k https://$AVI_HOST/login
-```
-
-#### Ollama Model Issues
-```bash
-# List available Ollama models
-docker-compose exec ollama ollama list
-
-# Pull missing Ollama models
-docker-compose exec ollama ollama pull llama3.2
-
-# Check Ollama logs
-docker-compose logs ollama
-
-# Restart Ollama service
-docker-compose restart ollama
-
-# Check Ollama resource usage
-docker stats ollama
-```
-
-#### Mistral AI Connection Issues
-```bash
-# Test Mistral AI API connectivity
-curl https://api.mistral.ai/v1/models \
-  -H "Authorization: Bearer $MISTRAL_API_KEY"
-
-# Check API key validity
-curl https://api.mistral.ai/v1/models \
-  -H "Authorization: Bearer $MISTRAL_API_KEY" -v
-
-# Test with different model
-curl -X POST https://api.mistral.ai/v1/chat/completions \
-  -H "Authorization: Bearer $MISTRAL_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model": "mistral-medium", "messages": [{"role": "user", "content": "Hello"}]}'
-
-# Check rate limits
-curl https://api.mistral.ai/v1/usage \
-  -H "Authorization: Bearer $MISTRAL_API_KEY"
-```
-
-#### Application Errors
-```bash
-# View application logs
-docker-compose logs avi-llm-agent
-
-# Check application health
-curl -v http://localhost:8088/api/health
-
-# Test direct API access
-curl -X POST http://localhost:8088/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message": "test", "model": "llama3.2"}'
-```
-
-### Docker-Specific Issues
-
-#### Ollama Container Issues
-```bash
-# Check Ollama container logs
-docker-compose logs ollama
-
-# Restart Ollama container
-docker-compose restart ollama
-
-# Check Ollama health
-docker-compose exec ollama curl http://localhost:11434/api/tags
-
-# Increase Ollama resources
-docker-compose up -d --force-recreate ollama
-```
-
-#### Provider Configuration Issues
-```bash
-# Check which provider is being used
-curl http://localhost:8088/api/health | jq .provider
-
-# Verify environment variables
-docker-compose exec avi-llm-agent env | grep LLM_PROVIDER
-
-# Check Mistral API key
-docker-compose exec avi-llm-agent env | grep MISTRAL_API_KEY
-```
-
-#### Network Connectivity Issues
-```bash
-# Test Ollama connectivity from Avi Agent container
-docker-compose exec avi-llm-agent curl http://ollama:11434/api/tags
-
-# Test Mistral AI connectivity
-docker-compose exec avi-llm-agent curl https://api.mistral.ai/v1/models
-
-# Check DNS resolution
-docker-compose exec avi-llm-agent ping ollama
-```
-
-### Debug Mode
-Enable debug logging:
-```bash
-# Update config.yaml
-sed -i 's/level: "info"/level: "debug"/' config.yaml
-
-# Or set environment variable
-export LOG_LEVEL=debug
-
-# Restart the application
-docker-compose restart avi-llm-agent
-
-# View debug logs
-docker-compose logs -f --tail=100
-```
-
-## 📚 Advanced Configuration
-
-### Customizing LLM Behavior
-```yaml
-# In config.yaml
-llm:
-  temperature: 0.3  # More deterministic (0.0 - 1.0)
-  max_tokens: 4096  # Maximum response length
-  timeout: 120     # Longer timeout for complex queries
-```
-
-### Performance Tuning
-```yaml
-# Optimize for high load
-server:
-  read_timeout: 60
-  write_timeout: 60
-  idle_timeout: 120
-
-avi:
-  timeout: 60
-  # Enable caching (if supported)
-```
-
-### Security Hardening
-```yaml
-# Secure configuration
-avi:
-  insecure: false  # Always use for production
-  # Consider using certificate-based authentication
-
-# Enable rate limiting (requires reverse proxy)
-# Example Nginx configuration:
-location /api/ {
-    limit_req zone=api burst=10 nodelay;
-}
-```
-
-## 🎓 Learning Resources
-
-### VMware Avi Documentation
-- [Avi API Guide](https://avinetworks.com/docs/latest/api-guide/)
-- [Avi REST API Reference](https://avinetworks.com/docs/latest/api-reference/)
-- [Avi Architecture](https://avinetworks.com/docs/latest/architecture/)
-
-### LLM and Ollama
-- [Ollama Documentation](https://ollama.ai/docs)
-- [Ollama Models](https://ollama.ai/library)
-- [LLM Best Practices](https://platform.openai.com/docs/guides/best-practices)
-
-### Mistral AI
-- [Mistral AI Documentation](https://docs.mistral.ai/)
-- [Mistral AI API Reference](https://docs.mistral.ai/api/)
-- [Mistral AI Models](https://mistral.ai/technology/)
-- [Mistral AI Pricing](https://mistral.ai/pricing/)
-
-### Development
-- [Go Documentation](https://go.dev/doc/)
-- [Gin Web Framework](https://gin-gonic.com/docs/)
-- [HTMX Documentation](https://htmx.org/docs/)
-
-## 🤝 Community and Support
-
-### Getting Help
-- **GitHub Issues**: Report bugs and feature requests
-- **GitHub Discussions**: Ask questions and share ideas
-- **Community Forum**: Join our community discussions
-
-### Contributing
-```bash
-# Fork the repository
-# Create a feature branch
-git checkout -b feature/your-feature
-
-# Make changes and commit
-git commit -m "Add your feature"
-
-# Push to your fork
-git push origin feature/your-feature
-
-# Create a Pull Request
-```
-
-### Code Standards
-- Follow Go formatting with `gofmt`
-- Use `golangci-lint` for linting
-- Maintain 80%+ test coverage
-- Document all public APIs
-
-## 📜 License
-
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- VMware Avi Load Balancer team
-- Ollama contributors
-- Gin web framework developers
-- HTMX community
-
----
-
-**Built with ❤️ for the VMware community**
-
-## Configuration
-
-### Application Configuration
-Create a `config.yaml` file:
-
-```yaml
-server:
-  port: 8088
-  read_timeout: 30
-  write_timeout: 30
-  idle_timeout: 60
-
-avi:
-  host: "avi-controller.example.com"
-  username: "admin"
-  password: "password"
-  version: "31.2.1"
-  tenant: "admin"
-  timeout: 30
-  insecure: true
-
-llm:
+llm:  # used when provider: "ollama"
   ollama_host: "http://localhost:11434"
   default_model: "llama3.2"
-  models:
-    - "llama3.2"
-    - "mistral"
-    - "codellama"
-  timeout: 60
-  temperature: 0.7
-  max_tokens: 2048
 
-log:
-  level: "info"
-  format: "json"
+sessions:
+  dir: "data/sessions"  # one JSONL file per session; kept for 30 days
 ```
 
-### Environment Variables
-The application supports environment variables for sensitive configuration:
+| Env var | Overrides |
+|---|---|
+| `AVI_HOST`, `AVI_USERNAME`, `AVI_PASSWORD`, `AVI_TENANT`, `AVI_AUTH_METHOD` | `avi.*` |
+| `LLM_PROVIDER` | `provider` (`ollama` or `python`) |
+| `MISTRAL_API_KEY`, `MISTRAL_DEFAULT_MODEL` | `mistral.*` |
+| `OLLAMA_HOST`, `OLLAMA_DEFAULT_MODEL` | `llm.*` |
+| `SESSIONS_DIR` | `sessions.dir` |
+| `SERVER_PORT`, `LOG_LEVEL` | `server.port`, `log.level` |
 
-- `AVI_HOST` - Avi controller hostname
-- `AVI_USERNAME` - Avi username
-- `AVI_PASSWORD` - Avi password
-- `OLLAMA_HOST` - Ollama server URL
+Note the code only accepts the literal provider values `ollama` or `python` (Mistral runs through the `python` provider, a bridge to the Mistral SDK) — if you have an older `.env` with `LLM_PROVIDER=mistral`, config validation will fail at startup until you change it to `python`.
 
-## Usage Examples
+## API Reference
 
-### Basic Queries
-- "What are the current virtual services?"
-- "Show me all pools with their health status"
-- "List service engines that are down"
-- "Get analytics for the last hour"
-
-### Management Operations  
-- "Create a new virtual service for my web application"
-- "Scale out the backend pool for app1"
-- "Add a new server 10.1.1.100 to the web-pool"
-- "Enable SSL for the api-virtualservice"
-
-### Monitoring and Troubleshooting
-- "Show me performance metrics for vs-web"
-- "Which pools have unhealthy servers?"
-- "Get connection statistics for the last 6 hours"
-- "Show me service engines with high CPU usage"
-
-## API Endpoints
-
-### Chat API
-- `POST /api/chat` - Send chat message
-- `GET /api/chat/history` - Get conversation history
-- `DELETE /api/chat/history` - Clear history
-
-### Model Management  
-- `GET /api/models` - List available models
-- `POST /api/models/validate` - Validate model availability
-
-### Health and Status
-- `GET /api/health` - Application health check
-- `GET /api/avi/*` - Direct Avi API proxy
-
-### HTMX Endpoints
-- `POST /htmx/chat` - HTMX chat interface
-- `GET /htmx/models` - Model selection UI
-- `GET /htmx/history` - Chat history UI
-
-## Development
-
-### Building from Source
 ```bash
-# Install dependencies
-go mod download
+# Chat (no session — always read-only, see note below)
+curl -X POST http://localhost:8088/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "List all virtual services", "model": "mistral-medium"}'
 
-# Run tests
-go test ./...
+# Sessions
+curl http://localhost:8088/api/chat/history                    # list all sessions
+curl -X DELETE http://localhost:8088/api/chat/history           # delete all sessions
+curl -X DELETE http://localhost:8088/api/sessions/<id>          # delete one session
+curl -X POST http://localhost:8088/api/sessions/<id>/mode \
+  -H "Content-Type: application/json" -d '{"mode":"read-write"}' # unlock a session
 
-# Build binary
-go build -o aviagent ./cmd/server
+# Models & health
+curl http://localhost:8088/api/models
+curl http://localhost:8088/api/health
 
-# Run application
-./aviagent -config config.yaml
+# Direct Avi API proxy (uses this app's configured Avi credentials)
+curl "http://localhost:8088/api/avi/virtualservice?limit_by=10"
 ```
 
-### Development with Docker
+> `/api/chat` doesn't create or use a session, so it's permanently read-only with no unlock path — a write request just comes back as a blocked-write result. Only the web UI tracks a session's read-only/read-write mode.
+
+## Docker Administration
+
 ```bash
-# Build development image
-docker build -t aviagent:dev .
-
-# Run with development configuration
-docker run -p 8088:8088 \
-  -v $(pwd)/config.yaml:/etc/aviagent/config.yaml \
-  aviagent:dev
+docker-compose logs -f avi-llm-agent          # follow logs
+docker-compose restart                        # restart
+docker-compose --env-file .env up -d --build  # rebuild after a code change (config.yaml alone is volume-mounted; nothing else is)
+docker-compose down                           # stop (add -v to also drop the sessions volume)
 ```
 
-### Testing
+Chat sessions live in a named Docker volume (`aviagent-sessions`) so they survive `--build`. To switch providers, set `LLM_PROVIDER` in `.env` (`python` for Mistral, `ollama` for Ollama) and restart:
+
 ```bash
-# Run unit tests
-go test ./internal/... -v
-
-# Run integration tests  
-go test ./tests/integration/... -v
-
-# Run with coverage
-go test -cover ./...
-
-# Run benchmarks
-go test -bench=. ./...
+docker-compose --env-file .env up -d --build
+docker-compose exec ollama ollama pull llama3.2   # only needed after switching to Ollama
 ```
-
-## Architecture
-
-### Project Structure
-```
-aviagent/
-├── cmd/
-│   └── server/          # Application entry point
-├── internal/
-│   ├── avi/            # Avi API client
-│   ├── llm/            # LLM client and tools
-│   ├── web/            # Web server and handlers
-│   └── config/         # Configuration management
-├── web/
-│   ├── templates/      # HTML templates
-│   └── static/         # Static assets (CSS, JS)
-├── tests/
-│   ├── unit/           # Unit tests
-│   └── integration/    # Integration tests
-├── docs/               # Documentation
-├── Dockerfile          # Multi-stage Docker build
-├── docker-compose.yml  # Development environment
-└── README.md
-```
-
-### Component Architecture
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Web Client    │    │   LLM Service   │    │  Avi Controller │
-│   (Browser)     │◄──►│    (Ollama)     │    │   (VMware)      │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │                       │
-         │                       │                       │
-         ▼                       ▼                       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   Avi LLM Agent (Go)                           │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
-│  │ Web Server  │  │ LLM Client  │  │     Avi API Client      │ │
-│  │   (Gin)     │  │  (Ollama)   │  │   (VMware ALB SDK)      │ │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## LLM Tool Definitions
-
-The agent provides comprehensive tool definitions for the LLM to understand available operations:
-
-### Virtual Service Tools
-- `list_virtual_services` - List and filter virtual services
-- `get_virtual_service` - Get detailed VS information
-- `create_virtual_service` - Create new virtual services
-- `update_virtual_service` - Modify existing virtual services
-- `delete_virtual_service` - Remove virtual services
-
-### Pool Management Tools
-- `list_pools` - List and filter backend pools
-- `get_pool` - Get detailed pool information
-- `create_pool` - Create new backend pools
-- `scale_out_pool` - Add capacity to pools
-- `scale_in_pool` - Remove capacity from pools
-
-### Monitoring Tools
-- `list_health_monitors` - List health monitors
-- `get_health_monitor` - Get health monitor details
-- `list_service_engines` - List service engines
-- `get_service_engine` - Get service engine details
-- `get_analytics` - Retrieve performance metrics
-
-### Generic Operations
-- `execute_generic_operation` - Execute any Avi API operation
-
-## Security Considerations
-
-### Authentication
-- Secure session management with VMware Avi controllers
-- CSRF token protection
-- Session timeout handling
-
-### Network Security
-- TLS/SSL support for Avi controller connections
-- Configurable certificate validation
-- Network isolation with Docker
-
-### Application Security
-- Input validation and sanitization
-- Rate limiting (recommended with reverse proxy)
-- Non-root container execution
-- Minimal container image with distroless base
-
-## Monitoring and Observability
-
-### Health Checks
-- Application health endpoint: `/api/health`
-- Docker health checks configured
-- Kubernetes readiness/liveness probes supported
-
-### Logging
-- Structured JSON logging
-- Configurable log levels
-- Request/response logging
-- Error tracking and alerting
-
-### Metrics (Optional)
-- Prometheus metrics endpoint
-- Grafana dashboards
-- Custom application metrics
 
 ## Troubleshooting
 
-### Common Issues
-
-#### Connection to Avi Controller
+**Avi controller connection fails**
 ```bash
-# Check connectivity
-curl -k https://your-avi-controller.com/login
-
-# Verify credentials
-# Check firewall rules
-# Validate SSL certificates
+curl -k https://<avi-host>/login
+curl -u "$AVI_USERNAME:$AVI_PASSWORD" -k https://$AVI_HOST/login
 ```
 
-#### Ollama Model Issues
+**Check which provider is active / debug logs**
 ```bash
-# List available models
+curl -s http://localhost:8088/api/health | jq .
+docker-compose exec avi-llm-agent env | grep -E 'LLM_PROVIDER|MISTRAL_API_KEY'
+```
+Set `level: "debug"` under `log:` in `config.yaml`, then `docker-compose --env-file .env up -d --build` to pick it up.
+
+**Ollama model missing**
+```bash
 docker-compose exec ollama ollama list
-
-# Pull missing models
 docker-compose exec ollama ollama pull llama3.2
-
-# Check Ollama logs
-docker-compose logs ollama
 ```
 
-#### Application Logs
+**MCP tool calling not working** (falls back to a smaller static tool set) — check `mcp-avi-server/build/index.js` exists; it's a separate npm build, not wired into `make build`:
 ```bash
-# View application logs
-docker-compose logs avi-llm-agent
-
-# Follow logs in real-time
-docker-compose logs -f avi-llm-agent
+cd mcp-avi-server && npm install && npm run build
 ```
 
-### Debug Mode
-Enable debug logging:
-```yaml
-log:
-  level: "debug"
-  format: "json"
+## Development
+
+See `CLAUDE.md` for architecture details. Quick reference:
+
+```bash
+go build -o build/bin/aviagent .   # compile check only — the binary isn't meant to be run directly, see Quick Start
+go test ./...
+go vet ./...
+make fmt   # gofmt + goimports
 ```
 
-## Production Deployment
-
-### Kubernetes
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: aviagent
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: aviagent
-  template:
-    metadata:
-      labels:
-        app: aviagent
-    spec:
-      containers:
-      - name: app
-        image: aviagent:latest
-        ports:
-        - containerPort: 8088
-        env:
-        - name: AVI_HOST
-          valueFrom:
-            secretKeyRef:
-              name: avi-credentials
-              key: host
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"  
-            cpu: "500m"
+Project layout:
 ```
-
-### Scaling Considerations
-- Horizontal scaling supported
-- Session state is stateless
-- Load balancer configuration needed
-- Database for persistent chat history (optional)
-
-## Contributing
-
-### Development Setup
-1. Fork the repository
-2. Create a feature branch
-3. Make changes and add tests
-4. Run the full test suite
-5. Submit a pull request
-
-### Code Standards
-- Go formatting with `gofmt`
-- Linting with `golangci-lint`
-- Test coverage > 80%
-- Documentation for public APIs
+internal/
+  avi/       # Avi Controller REST client
+  config/    # Viper-based config loading
+  llm/       # LLM client interface + static fallback tool definitions
+  mcpavi/    # MCP client that spawns and talks to mcp-avi-server
+  python/    # Python/Mistral SDK bridge (subprocess)
+  web/       # Gin server, handlers, session store, chat rendering
+mcp-avi-server/  # separate TypeScript MCP server (generic Avi CRUD tools)
+web/
+  templates/ # Gin HTML templates (HTMX), what's actually served
+  static/    # CSS/JS for the templates above
+  src/       # a separate, unused React app — not built into Docker
+```
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-### Documentation
-- [API Documentation](docs/API.md)
-- [Deployment Guide](docs/DEPLOYMENT.md)
-- [Configuration Reference](docs/CONFIGURATION.md)
-
-### Community
-- GitHub Issues for bug reports
-- GitHub Discussions for questions
-- Contributing guidelines in [CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Roadmap
-
-### Version 1.1
-- [ ] Persistent chat history
-- [ ] User authentication and authorization
-- [ ] Advanced analytics dashboards
-- [ ] Webhook support for notifications
-
-### Version 1.2
-- [ ] Multi-tenant support
-- [ ] Custom tool definitions
-- [ ] Integration with other VMware products
-- [ ] Advanced monitoring and alerting
-
----
-
-**Built with ❤️ for the VMware community**
+No license file is currently included in this repository; all rights are reserved by default until one is added.

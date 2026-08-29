@@ -15,6 +15,7 @@ services:
       - AVI_TENANT=${AVI_TENANT:-admin}
       - AVI_TIMEOUT=${AVI_TIMEOUT:-30}
       - AVI_INSECURE=${AVI_INSECURE:-false}
+      - AVI_AUTH_METHOD=${AVI_AUTH_METHOD:-session}
 
       # Avi MCP server (comprehensive Avi API tool calling; falls back to the
       # built-in tool set if disabled or unreachable)

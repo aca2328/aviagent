@@ -45,7 +45,7 @@ The Avi MCP server (`mcp-avi-server/`) is a separate npm project, not wired into
 **Two LLM providers, selected by `config.Provider` (`"ollama"` or `"python"`)** — set in `config.yaml`/`LLM_PROVIDER` env var:
 - `"ollama"` → `internal/llm` talks directly to a local Ollama HTTP endpoint.
 - `"python"` → `internal/python` (`PythonBridge`) shells out to a Python subprocess (`python3 -m python_mistral.bridge <command> <json>`) which wraps the official Mistral Python SDK (`python_mistral/client.py`). This is the recommended/default provider (more reliable tool-calling than raw Ollama JSON parsing). Go and Python communicate via JSON over argv/stdout, not a long-lived socket — each call spawns a fresh interpreter.
-- **Gotcha:** `.env.example` and the README call the second provider `"mistral"`, but `internal/config/config.go` (`validateConfig`) only accepts the literal strings `"ollama"` or `"python"`. Setting `LLM_PROVIDER=mistral` will fail config validation.
+- **Gotcha:** `internal/config/config.go` (`validateConfig`) only accepts the literal strings `"ollama"` or `"python"` for `LLM_PROVIDER`/`provider` — never `"mistral"`, even for the Mistral setup path (`.env.example` and `start-mistral.sh` both write `LLM_PROVIDER=python`, since "python" names the provider *implementation*, not the LLM). An older `.env` with `LLM_PROVIDER=mistral` fails config validation at startup.
 
 Provider selection is threaded through `internal/web/web-server.go` at nearly every handler (`s.config.Provider == "ollama"` branches for history/model-list format, since Ollama and the Python/Mistral bridge use different chat-history and model-list shapes).
 
