@@ -602,7 +602,10 @@ function initializeSessionRail() {
         newSessionButton.addEventListener('click', function() {
             resetToEmptyState();
             fetch('/htmx/sessions', { method: 'POST' })
-                .then(function(r) { return r.text(); })
+                .then(function(r) {
+                    updateModeControl(r.headers.get('X-Session-Id'), r.headers.get('X-Session-Mode'));
+                    return r.text();
+                })
                 .then(replaceSessionRailList)
                 .catch(function() { /* rail refresh is best-effort */ });
         });
@@ -633,6 +636,123 @@ function initializeSessionRail() {
     });
 }
 
+// Read-only/read-write mode (Phase 5): the composer's segmented control is
+// the proactive toggle; write-refusal cards (see initializeWriteRefusalCards)
+// are the reactive path, triggered when the assistant tried a write while
+// read-only. Both end up calling POST /api/sessions/:id/mode, and both keep
+// the segmented control in sync via updateModeControl.
+function updateModeControl(sessionId, mode) {
+    const seg = document.getElementById('mode-seg');
+    if (!seg) return;
+    if (sessionId) seg.dataset.sessionId = sessionId;
+    if (mode) {
+        seg.querySelectorAll('.mode-seg-opt').forEach(function(btn) {
+            btn.classList.toggle('is-active', btn.dataset.mode === mode);
+        });
+    }
+}
+
+function setSessionMode(sessionId, mode) {
+    return fetch('/api/sessions/' + encodeURIComponent(sessionId) + '/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: mode }),
+    });
+}
+
+function initializeModeControl() {
+    const seg = document.getElementById('mode-seg');
+    if (!seg) return;
+
+    seg.addEventListener('click', function(e) {
+        const btn = e.target.closest('.mode-seg-opt');
+        if (!btn || btn.classList.contains('is-active')) return;
+        const mode = btn.dataset.mode;
+        const sessionId = seg.dataset.sessionId;
+        if (!sessionId) return;
+
+        if (mode === 'read-write' && !confirm(
+            'Switch this session to read-write? The assistant will be able to create, update, delete and scale Avi objects.'
+        )) {
+            return;
+        }
+
+        setSessionMode(sessionId, mode)
+            .then(function(r) { if (r.ok) updateModeControl(sessionId, mode); })
+            .catch(function() { /* best-effort */ });
+    });
+
+    // Keep in sync as the active session changes underneath the composer —
+    // sending a chat message can create a brand-new session, and loading a
+    // past one (via the rail's hx-get) has its own mode.
+    document.body.addEventListener('htmx:afterRequest', function(e) {
+        if (!e.detail.target || e.detail.target.id !== 'chat-messages') return;
+        const xhr = e.detail.xhr;
+        updateModeControl(xhr.getResponseHeader('X-Session-Id'), xhr.getResponseHeader('X-Session-Mode'));
+    });
+}
+
+// Write-refusal cards (rendered by renderChatMessage for a "WRITE BLOCKED"
+// tool result): "Unlock and apply" switches the session to read-write, then
+// replays the exact tool call through /api/tools/apply, which re-checks mode
+// server-side rather than trusting this client-side unlock.
+function initializeWriteRefusalCards() {
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return;
+
+    chatMessages.addEventListener('click', function(e) {
+        const btn = e.target.closest('.write-unlock-btn');
+        if (!btn) return;
+        const card = btn.closest('.write-refusal-card');
+        const codeEl = card && card.querySelector('pre code');
+        if (!codeEl) return;
+
+        let info;
+        try {
+            info = JSON.parse(codeEl.textContent);
+        } catch (err) {
+            return;
+        }
+
+        const seg = document.getElementById('mode-seg');
+        const sessionId = seg && seg.dataset.sessionId;
+        if (!sessionId) return;
+
+        if (!confirm('Apply ' + info.method + ' ' + info.path + ' now?\n\nThis unlocks the session to read-write and runs the write immediately.')) {
+            return;
+        }
+
+        const original = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying…';
+
+        setSessionMode(sessionId, 'read-write')
+            .then(function() {
+                updateModeControl(sessionId, 'read-write');
+                return fetch('/api/tools/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tool: info.tool, args: info.args }),
+                });
+            })
+            .then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
+            .then(function(res) {
+                if (res.ok) {
+                    btn.innerHTML = '<i class="fas fa-check"></i> Applied';
+                    card.classList.add('is-applied');
+                } else {
+                    btn.disabled = false;
+                    btn.innerHTML = original;
+                    alert('Failed to apply: ' + (res.body && res.body.error ? res.body.error : 'unknown error'));
+                }
+            })
+            .catch(function() {
+                btn.disabled = false;
+                btn.innerHTML = original;
+            });
+    });
+}
+
 // Cached at load time (see DOMContentLoaded below) because loading a past
 // session's history replaces #chat-messages' entire innerHTML, permanently
 // detaching the #empty-state node from the document. Keeping the actual node
@@ -659,6 +779,8 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeTurnChipLinking();
     initializePromptButtons();
     initializeSessionRail();
+    initializeModeControl();
+    initializeWriteRefusalCards();
 
     const messageInput = document.getElementById('message-input');
     const chatForm = document.getElementById('chat-form');

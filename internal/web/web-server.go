@@ -117,6 +117,32 @@ func turnIDFromContext(ctx context.Context) string {
 	return turnID
 }
 
+// Session write mode. A session's mode gates whether executeToolCall may
+// dispatch a write to the Avi controller; see isWriteTool/describeWrite.
+const (
+	sessionModeReadOnly  = "read-only"
+	sessionModeReadWrite = "read-write"
+)
+
+// isReadOnlyMode treats anything other than the exact read-write string as
+// read-only -- an empty mode (a pre-Phase-5 session, or the JSON /api/chat
+// path, which carries no session context at all) is the safe default, not
+// an unguarded one.
+func isReadOnlyMode(mode string) bool {
+	return mode != sessionModeReadWrite
+}
+
+type sessionModeContextKey struct{}
+
+func contextWithMode(ctx context.Context, mode string) context.Context {
+	return context.WithValue(ctx, sessionModeContextKey{}, mode)
+}
+
+func modeFromContext(ctx context.Context) string {
+	mode, _ := ctx.Value(sessionModeContextKey{}).(string)
+	return mode
+}
+
 // activeSessionCookie names the cookie that tracks which session a browser is
 // currently talking to. Its max-age matches sessionRetention so a cookie
 // never outlives the session file it points at.
@@ -134,21 +160,21 @@ func clearActiveSessionCookie(c *gin.Context) {
 // persisted to: the browser's active_session_id cookie if it still points at
 // a live session, or a freshly created one (refreshing the cookie either
 // way, so a session's expiry keeps sliding while it's actually in use).
-func (s *Server) getOrCreateActiveSession(c *gin.Context, model string) string {
+func (s *Server) getOrCreateActiveSession(c *gin.Context, model string) *ChatSession {
 	if id, err := c.Cookie(activeSessionCookie); err == nil && id != "" {
-		if _, err := s.sessionStore.Get(id); err == nil {
+		if session, err := s.sessionStore.Get(id); err == nil {
 			setActiveSessionCookie(c, id)
-			return id
+			return session
 		}
 	}
 
 	session, err := s.sessionStore.Create(model)
 	if err != nil {
 		s.logger.Error("Failed to create chat session", zap.Error(err))
-		return ""
+		return nil
 	}
 	setActiveSessionCookie(c, session.ID)
-	return session.ID
+	return session
 }
 
 // LogBuffer represents an enhanced log buffer with filtering capabilities
@@ -343,6 +369,7 @@ type ChatMessage struct {
 type ChatSession struct {
 	ID       string        `json:"id"`
 	Model    string        `json:"model"`
+	Mode     string        `json:"mode,omitempty"` // sessionModeReadOnly (default) or sessionModeReadWrite
 	Messages []ChatMessage `json:"messages"`
 	Created  time.Time     `json:"created"`
 }
@@ -517,15 +544,18 @@ func renderChatMessage(message string) template.HTML {
 	var b strings.Builder
 	inCodeBlock := false
 	blockIsAPIResult := false
+	blockIsWriteRefusal := false
 	pendingToolName := ""
+	pendingIsWriteRefusal := false
 
 	for _, line := range strings.Split(message, "\n") {
 		if inCodeBlock {
 			if line == "```" {
 				b.WriteString("</code></pre>")
-				if blockIsAPIResult {
+				if blockIsAPIResult || blockIsWriteRefusal {
 					b.WriteString("</div>")
 					blockIsAPIResult = false
+					blockIsWriteRefusal = false
 				}
 				inCodeBlock = false
 			} else {
@@ -544,20 +574,37 @@ func renderChatMessage(message string) template.HTML {
 			} else {
 				jsonID := ""
 				if pendingToolName != "" && line == "```json" {
-					blockIsAPIResult = true
-					jsonID = "api-result-" + uuid.New().String()
-					b.WriteString(`<div class="api-result-block" data-tool="`)
-					b.WriteString(html.EscapeString(pendingToolName))
-					b.WriteString(`">`)
-					b.WriteString(`<div class="api-result-toolbar d-flex gap-2 mb-2">`)
-					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary diagram-download-btn" title="Download this result as a standalone node-link diagram page">`)
-					b.WriteString(`<i class="fas fa-diagram-project"></i> Download Diagram</button>`)
-					b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
-					b.WriteString(jsonID)
-					b.WriteString(`" aria-expanded="false" aria-controls="`)
-					b.WriteString(jsonID)
-					b.WriteString(`"><i class="fas fa-code"></i> Show/Hide JSON</button>`)
-					b.WriteString(`</div>`)
+					if pendingIsWriteRefusal {
+						blockIsWriteRefusal = true
+						jsonID = "write-refusal-" + uuid.New().String()
+						b.WriteString(`<div class="write-refusal-card" data-tool="`)
+						b.WriteString(html.EscapeString(pendingToolName))
+						b.WriteString(`">`)
+						b.WriteString(`<div class="write-refusal-toolbar d-flex gap-2 mb-2">`)
+						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-warning write-unlock-btn">`)
+						b.WriteString(`<i class="fas fa-lock-open"></i> Unlock and apply</button>`)
+						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
+						b.WriteString(jsonID)
+						b.WriteString(`" aria-expanded="false" aria-controls="`)
+						b.WriteString(jsonID)
+						b.WriteString(`"><i class="fas fa-code"></i> Show/Hide details</button>`)
+						b.WriteString(`</div>`)
+					} else {
+						blockIsAPIResult = true
+						jsonID = "api-result-" + uuid.New().String()
+						b.WriteString(`<div class="api-result-block" data-tool="`)
+						b.WriteString(html.EscapeString(pendingToolName))
+						b.WriteString(`">`)
+						b.WriteString(`<div class="api-result-toolbar d-flex gap-2 mb-2">`)
+						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary diagram-download-btn" title="Download this result as a standalone node-link diagram page">`)
+						b.WriteString(`<i class="fas fa-diagram-project"></i> Download Diagram</button>`)
+						b.WriteString(`<button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#`)
+						b.WriteString(jsonID)
+						b.WriteString(`" aria-expanded="false" aria-controls="`)
+						b.WriteString(jsonID)
+						b.WriteString(`"><i class="fas fa-code"></i> Show/Hide JSON</button>`)
+						b.WriteString(`</div>`)
+					}
 				}
 				b.WriteString(`<pre class="bg-light p-3 rounded`)
 				if jsonID != "" {
@@ -568,6 +615,17 @@ func renderChatMessage(message string) template.HTML {
 				inCodeBlock = true
 			}
 			pendingToolName = ""
+			pendingIsWriteRefusal = false
+		case strings.HasPrefix(line, "WRITE BLOCKED"):
+			b.WriteString(`<h6 class="mt-3 mb-2 text-warning"><i class="fas fa-lock"></i> `)
+			b.WriteString(html.EscapeString(line))
+			b.WriteString(`</h6>`)
+			if open := strings.Index(line, "("); open != -1 {
+				if closeIdx := strings.Index(line[open:], ")"); closeIdx != -1 {
+					pendingToolName = line[open+1 : open+closeIdx]
+					pendingIsWriteRefusal = true
+				}
+			}
 		case strings.HasPrefix(line, "API Result"):
 			b.WriteString(`<h6 class="mt-3 mb-2"><i class="fas fa-code"></i> `)
 			b.WriteString(html.EscapeString(line))
@@ -925,6 +983,10 @@ func (s *Server) setupRoutes() {
 		// Session management (delete is called via plain fetch, not htmx —
 		// see initializeSessionRail in app.js)
 		api.DELETE("/sessions/:id", s.handleDeleteSession)
+		api.POST("/sessions/:id/mode", s.handleSetSessionMode)
+
+		// Explicit unlock-and-apply for a write executeToolCall refused
+		api.POST("/tools/apply", s.handleApplyTool)
 	}
 
 	// HTMX specific routes
@@ -990,17 +1052,24 @@ func (s *Server) handleIndex(c *gin.Context) {
 		s.logger.Error("Failed to list sessions", zap.Error(err))
 	}
 	activeSessionID, _ := c.Cookie(activeSessionCookie)
+	activeSessionMode := sessionModeReadOnly
+	if activeSessionID != "" {
+		if activeSession, err := s.sessionStore.Get(activeSessionID); err == nil && activeSession.Mode == sessionModeReadWrite {
+			activeSessionMode = sessionModeReadWrite
+		}
+	}
 
 	c.HTML(http.StatusOK, "index.html", gin.H{
-		"title":           "VMware Avi LLM Agent",
-		"models":          models,
-		"defaultModel":    defaultModel,
-		"version":         s.version,
-		"buildDate":       s.buildDate,
-		"tenant":          tenant,
-		"toolCount":       toolCount,
-		"sessions":        sessions,
-		"activeSessionID": activeSessionID,
+		"title":             "VMware Avi LLM Agent",
+		"models":            models,
+		"defaultModel":      defaultModel,
+		"version":           s.version,
+		"buildDate":         s.buildDate,
+		"tenant":            tenant,
+		"toolCount":         toolCount,
+		"sessions":          sessions,
+		"activeSessionID":   activeSessionID,
+		"activeSessionMode": activeSessionMode,
 	})
 }
 
@@ -1226,10 +1295,17 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"timestamp": timestamp,
 	})
 
-	sessionID := s.getOrCreateActiveSession(c, model)
+	session := s.getOrCreateActiveSession(c, model)
+	sessionID := ""
+	sessionMode := ""
+	if session != nil {
+		sessionID = session.ID
+		sessionMode = session.Mode
+	}
 
 	// Process the chat message
-	ctx, cancel := context.WithTimeout(contextWithTurn(c.Request.Context(), turnID), 60*time.Second)
+	ctx := contextWithMode(contextWithTurn(c.Request.Context(), turnID), sessionMode)
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	turnStart := time.Now()
@@ -1286,6 +1362,11 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"duration_ms": turnDuration.Milliseconds(),
 		"turn_id":     turnID,
 	})
+
+	if session != nil {
+		c.Header("X-Session-Id", session.ID)
+		c.Header("X-Session-Mode", session.Mode)
+	}
 
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
@@ -1412,6 +1493,24 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 			toolStart := time.Now()
 			result, err := s.executeToolCall(ctx, toolCall)
 			toolDuration := time.Since(toolStart)
+			if refusal, ok := err.(*writeRefusedError); ok {
+				cardJSON, marshalErr := json.Marshal(map[string]interface{}{
+					"tool":   refusal.Tool,
+					"method": refusal.Method,
+					"path":   refusal.Path,
+					"body":   refusal.Body,
+					"args":   refusal.Args,
+				})
+				if marshalErr != nil {
+					cardJSON = []byte("{}")
+				}
+				llmResponse.Message += fmt.Sprintf("\n\nWRITE BLOCKED (%s):\n```json\n%s\n```", refusal.Tool, cardJSON)
+				s.broadcastOperationLog("warning", "Write blocked by read-only mode", map[string]interface{}{
+					"tool": refusal.Tool, "method": refusal.Method, "path": refusal.Path,
+					"duration_ms": toolDuration.Milliseconds(), "turn_id": turnID,
+				})
+				continue
+			}
 			if err != nil {
 				errorMsg := fmt.Sprintf("Tool call failed: %s - Error: %v", toolCall.Function.Name, err)
 				toolErrors = append(toolErrors, errorMsg)
@@ -1465,11 +1564,122 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 	return llmResponse, objectCount, nil
 }
 
-// executeToolCall executes a tool call against the Avi API. Tool calls whose
-// name matches a tool advertised by the Avi MCP client are routed there;
-// everything else falls back to the built-in Go dispatch below (the static
-// tool set from internal/llm/tools.go, used when MCP is unavailable).
+// executeToolCall is the guarded entry point every LLM-initiated tool call
+// goes through: a write attempted on a read-only session (the default, see
+// sessionModeReadOnly) is refused before dispatch, returning a
+// *writeRefusedError the caller renders as a confirmation card instead of a
+// result. /api/tools/apply (an explicit, user-initiated unlock) calls
+// dispatchToolCall directly, bypassing this guard on purpose.
 func (s *Server) executeToolCall(ctx context.Context, toolCall llm.ToolCall) (interface{}, error) {
+	if isReadOnlyMode(modeFromContext(ctx)) && isWriteTool(toolCall) {
+		method, path, body := describeWrite(toolCall)
+		return nil, &writeRefusedError{
+			Tool: toolCall.Function.Name, Method: method, Path: path, Body: body, Args: toolCall.Args,
+		}
+	}
+	return s.dispatchToolCall(ctx, toolCall)
+}
+
+// isWriteTool classifies a tool call as a write needing read-write mode.
+// Defaults to true (write) whenever it can't prove otherwise -- for an
+// unrecognized tool name, and for execute_generic_operation/avi_action whose
+// method is an argument rather than part of the name -- because a false
+// refusal costs one Unlock click, but a false allow bypasses the whole gate.
+func isWriteTool(toolCall llm.ToolCall) bool {
+	switch toolCall.Function.Name {
+	case "avi_list", "avi_get", "avi_get_analytics", "avi_list_object_types",
+		"list_virtual_services", "get_virtual_service", "list_pools", "get_pool",
+		"list_health_monitors", "get_health_monitor", "list_service_engines",
+		"get_service_engine", "get_analytics":
+		return false
+	case "avi_create", "avi_update", "avi_patch", "avi_delete", "avi_action",
+		"create_virtual_service", "update_virtual_service", "delete_virtual_service",
+		"create_pool", "scale_out_pool", "scale_in_pool":
+		return true
+	case "execute_generic_operation":
+		method, ok := toolCall.Args["method"].(string)
+		return !ok || !strings.EqualFold(method, "GET")
+	default:
+		return true
+	}
+}
+
+// describeWrite reconstructs the Avi Controller request a write tool call
+// would have made, for display on the refusal confirmation card. Mirrors the
+// REST conventions both dispatchToolCall's switch and the Avi MCP server's
+// generic CRUD tools already follow (see CLAUDE.md's Avi MCP server section).
+func describeWrite(toolCall llm.ToolCall) (method, path string, body interface{}) {
+	args := toolCall.Args
+	objectPath := "/api/" + strings.ToLower(fmt.Sprint(args["object_type"]))
+	uuid, _ := args["uuid"].(string)
+
+	switch toolCall.Function.Name {
+	case "avi_create":
+		return "POST", objectPath, args["body"]
+	case "avi_update":
+		return "PUT", objectPath + "/" + uuid, args["body"]
+	case "avi_patch":
+		return "PATCH", objectPath + "/" + uuid, args["body"]
+	case "avi_delete":
+		return "DELETE", objectPath + "/" + uuid, nil
+	case "avi_action":
+		action, _ := args["action"].(string)
+		method, _ := args["method"].(string)
+		if method == "" {
+			method = "POST"
+		}
+		if uuid != "" {
+			return method, objectPath + "/" + uuid + "/" + action, args["body"]
+		}
+		return method, objectPath + "/" + action, args["body"]
+	case "create_virtual_service":
+		return "POST", "/api/virtualservice", args
+	case "update_virtual_service":
+		return "PUT", "/api/virtualservice/" + uuid, args
+	case "delete_virtual_service":
+		return "DELETE", "/api/virtualservice/" + uuid, nil
+	case "create_pool":
+		return "POST", "/api/pool", args
+	case "scale_out_pool":
+		return "POST", "/api/pool/" + uuid + "/scaleout", args
+	case "scale_in_pool":
+		return "POST", "/api/pool/" + uuid + "/scalein", args
+	case "execute_generic_operation":
+		m, _ := args["method"].(string)
+		if m == "" {
+			m = "POST"
+		}
+		p, _ := args["endpoint"].(string)
+		return m, p, args["body"]
+	default:
+		return "POST", objectPath, args
+	}
+}
+
+// writeRefusedError is returned by executeToolCall in place of dispatching a
+// write on a read-only session. Args carries the tool call's original
+// arguments (not just the human-readable Method/Path/Body) so the
+// confirmation card's "Unlock and apply" button can replay it byte-for-byte
+// through /api/tools/apply.
+type writeRefusedError struct {
+	Tool   string
+	Method string
+	Path   string
+	Body   interface{}
+	Args   map[string]interface{}
+}
+
+func (e *writeRefusedError) Error() string {
+	return fmt.Sprintf("refused to run %s (%s %s) in read-only mode", e.Tool, e.Method, e.Path)
+}
+
+// dispatchToolCall executes a tool call against the Avi API, unconditionally
+// -- callers needing the read-only gate use executeToolCall instead. Tool
+// calls whose name matches a tool advertised by the Avi MCP client are
+// routed there; everything else falls back to the built-in Go dispatch below
+// (the static tool set from internal/llm/tools.go, used when MCP is
+// unavailable).
+func (s *Server) dispatchToolCall(ctx context.Context, toolCall llm.ToolCall) (interface{}, error) {
 	mcpClient, mcpErr := s.getMcpAviClient(ctx)
 	if mcpErr == nil && mcpClient.HasTool(toolCall.Function.Name) {
 		return mcpClient.CallTool(ctx, toolCall.Function.Name, toolCall.Args)
@@ -1787,6 +1997,8 @@ func (s *Server) handleCreateSession(c *gin.Context) {
 		return
 	}
 	setActiveSessionCookie(c, session.ID)
+	c.Header("X-Session-Id", session.ID)
+	c.Header("X-Session-Mode", session.Mode)
 
 	sessions, err := s.sessionStore.List()
 	if err != nil {
@@ -1810,6 +2022,8 @@ func (s *Server) handleGetSessionMessages(c *gin.Context) {
 		return
 	}
 	setActiveSessionCookie(c, id)
+	c.Header("X-Session-Id", session.ID)
+	c.Header("X-Session-Mode", session.Mode)
 	c.HTML(http.StatusOK, "session_messages.html", gin.H{
 		"messages": session.Messages,
 	})
@@ -1828,6 +2042,66 @@ func (s *Server) handleDeleteSession(c *gin.Context) {
 		clearActiveSessionCookie(c)
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
+}
+
+// handleSetSessionMode flips a session between read-only (the default) and
+// read-write. Called both by the composer's segmented control (a proactive,
+// user-initiated unlock) and by a write-refusal card's "Unlock and apply"
+// button (which calls this, then /api/tools/apply, in sequence).
+func (s *Server) handleSetSessionMode(c *gin.Context) {
+	id := c.Param("id")
+	var req struct {
+		Mode string `json:"mode" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Mode != sessionModeReadOnly && req.Mode != sessionModeReadWrite {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "mode must be read-only or read-write"})
+		return
+	}
+	if err := s.sessionStore.SetMode(id, req.Mode); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"mode": req.Mode})
+}
+
+// handleApplyTool re-dispatches a tool call that executeToolCall previously
+// refused, after the user has explicitly unlocked the session. Re-checks
+// mode server-side (never trusts the client's word that it called
+// handleSetSessionMode first) and calls dispatchToolCall directly, bypassing
+// the read-only gate on purpose -- this endpoint IS the unlock path.
+func (s *Server) handleApplyTool(c *gin.Context) {
+	var req struct {
+		Tool string                 `json:"tool" binding:"required"`
+		Args map[string]interface{} `json:"args"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	sessionID, _ := c.Cookie(activeSessionCookie)
+	session, err := s.sessionStore.Get(sessionID)
+	if err != nil || isReadOnlyMode(session.Mode) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "session is read-only; unlock it first"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	defer cancel()
+
+	result, err := s.dispatchToolCall(ctx, llm.ToolCall{
+		Function: llm.ToolCallFunction{Name: req.Tool},
+		Args:     req.Args,
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"result": result})
 }
 
 // handleHealth returns health status

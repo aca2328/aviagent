@@ -120,6 +120,14 @@
                                 <button type="button" class="btn-outline btn-outline-sm" id="add-context-btn" title="Coming soon">
                                     <i class="ph ph-at"></i>Add object context
                                 </button>
+                                <div class="mode-seg" id="mode-seg" data-session-id="{{.activeSessionID}}" title="Controls whether the assistant may write to the Avi controller">
+                                    <button type="button" class="mode-seg-opt{{if ne .activeSessionMode "read-write"}} is-active{{end}}" data-mode="read-only">
+                                        <i class="ph ph-lock-simple"></i>Read-only
+                                    </button>
+                                    <button type="button" class="mode-seg-opt{{if eq .activeSessionMode "read-write"}} is-active{{end}}" data-mode="read-write">
+                                        <i class="ph ph-lock-simple-open"></i>Read-write
+                                    </button>
+                                </div>
                                 <div class="composer-spacer"></div>
                                 <span class="composer-hint">⏎ send · ⇧⏎ newline</span>
                                 <button type="submit" class="send-btn" id="send-button" aria-label="Send" form="chat-form">

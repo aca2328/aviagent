@@ -36,14 +36,18 @@ type SessionStore interface {
 	Get(id string) (*ChatSession, error)
 	List() ([]SessionSummary, error)
 	AppendMessage(id string, msg ChatMessage) error
+	SetMode(id, mode string) error
 	Delete(id string) error
 	DeleteAll() error
 }
 
-// sessionHeader is the first line of a session's JSONL file.
+// sessionHeader is the first line of a session's JSONL file. Mode is absent
+// on files written before Phase 5; readers must treat a missing/empty Mode
+// as sessionModeReadOnly (see isReadOnlyMode), not as an unset write mode.
 type sessionHeader struct {
 	ID      string    `json:"id"`
 	Model   string    `json:"model"`
+	Mode    string    `json:"mode,omitempty"`
 	Created time.Time `json:"created"`
 }
 
@@ -74,6 +78,7 @@ func (s *JSONLSessionStore) Create(model string) (*ChatSession, error) {
 	session := &ChatSession{
 		ID:      uuid.New().String(),
 		Model:   model,
+		Mode:    sessionModeReadOnly,
 		Created: time.Now(),
 	}
 
@@ -88,7 +93,7 @@ func (s *JSONLSessionStore) Create(model string) (*ChatSession, error) {
 	}
 	defer file.Close()
 
-	header := sessionHeader{ID: session.ID, Model: session.Model, Created: session.Created}
+	header := sessionHeader{ID: session.ID, Model: session.Model, Mode: session.Mode, Created: session.Created}
 	data, err := json.Marshal(header)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal session header: %w", err)
@@ -123,6 +128,63 @@ func (s *JSONLSessionStore) AppendMessage(id string, msg ChatMessage) error {
 	return nil
 }
 
+// SetMode rewrites a session's file with a new mode in its header. This is
+// a full read-and-rewrite (unlike AppendMessage's cheap append) since a
+// JSONL file's first line can't be edited in place, but mode changes are rare
+// compared to message appends. Writes to a temp file in the same directory
+// and renames over the original so a crash mid-write can't corrupt or
+// truncate the session (a cross-device temp dir would make the rename fail).
+func (s *JSONLSessionStore) SetMode(id, mode string) error {
+	session, err := s.Get(id)
+	if err != nil {
+		return err
+	}
+
+	path, err := s.path(id)
+	if err != nil {
+		return err
+	}
+	tmpPath := path + ".tmp"
+
+	file, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("failed to create temp session file: %w", err)
+	}
+
+	header := sessionHeader{ID: session.ID, Model: session.Model, Mode: mode, Created: session.Created}
+	data, err := json.Marshal(header)
+	if err != nil {
+		file.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to marshal session header: %w", err)
+	}
+	if _, err := file.Write(append(data, '\n')); err != nil {
+		file.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write session header: %w", err)
+	}
+
+	for _, msg := range session.Messages {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			continue
+		}
+		if _, err := file.Write(append(data, '\n')); err != nil {
+			file.Close()
+			os.Remove(tmpPath)
+			return fmt.Errorf("failed to write chat message: %w", err)
+		}
+	}
+	file.Close()
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to replace session file: %w", err)
+	}
+
+	return nil
+}
+
 func (s *JSONLSessionStore) Get(id string) (*ChatSession, error) {
 	path, err := s.path(id)
 	if err != nil {
@@ -151,7 +213,7 @@ func (s *JSONLSessionStore) Get(id string) (*ChatSession, error) {
 		return nil, fmt.Errorf("session expired")
 	}
 
-	session := &ChatSession{ID: header.ID, Model: header.Model, Created: header.Created}
+	session := &ChatSession{ID: header.ID, Model: header.Model, Mode: header.Mode, Created: header.Created}
 	for scanner.Scan() {
 		var msg ChatMessage
 		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
