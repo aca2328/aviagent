@@ -163,6 +163,13 @@
                 </div>
                 <div class="rule rule-tight rule-narrow"></div>
 
+                <div class="inspector-turn-banner d-none" id="trace-turn-banner">
+                    <i class="ph ph-funnel"></i>
+                    <span class="mono">Showing one turn</span>
+                    <div class="inspector-spacer"></div>
+                    <button type="button" class="btn-link" id="clear-turn-filter">Clear</button>
+                </div>
+
                 <div class="inspector-steps" id="logs-display"></div>
 
                 <div class="inspector-footer">
@@ -177,6 +184,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/app.js?v={{.version}}"></script>
 </body>
 </html>

@@ -98,6 +98,22 @@ type EnhancedLogEntry struct {
 	Message   string                 `json:"message"`
 	Context   map[string]interface{} `json:"context,omitempty"`   // headers, payload, etc.
 	Metadata map[string]string       `json:"metadata,omitempty"`  // additional tags
+	TurnID    string                 `json:"turn_id,omitempty"`  // correlates every step of one chat turn
+}
+
+// turnIDContextKey carries a per-request turn ID through context.Context so
+// the logging helpers called deep inside processChatMessage (which don't
+// otherwise know which chat turn they belong to) can stamp it onto their
+// entries without changing their signatures at all ~37 call sites.
+type turnIDContextKey struct{}
+
+func contextWithTurn(ctx context.Context, turnID string) context.Context {
+	return context.WithValue(ctx, turnIDContextKey{}, turnID)
+}
+
+func turnIDFromContext(ctx context.Context) string {
+	turnID, _ := ctx.Value(turnIDContextKey{}).(string)
+	return turnID
 }
 
 // LogBuffer represents an enhanced log buffer with filtering capabilities
@@ -141,12 +157,12 @@ func (b *LogBuffer) GetEntries() []EnhancedLogEntry {
 	return entries
 }
 
-func (b *LogBuffer) GetFilteredEntries(logType, level, search string) []EnhancedLogEntry {
+func (b *LogBuffer) GetFilteredEntries(logType, level, search, turn string) []EnhancedLogEntry {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	var filtered []EnhancedLogEntry
-	
+
 	for _, entry := range b.entries {
 		// Type filter
 		if logType != "" && logType != "all" && !strings.HasPrefix(entry.Type, logType) {
@@ -155,6 +171,11 @@ func (b *LogBuffer) GetFilteredEntries(logType, level, search string) []Enhanced
 
 		// Level filter
 		if level != "" && level != "all" && entry.Level != level {
+			continue
+		}
+
+		// Turn filter
+		if turn != "" && entry.TurnID != turn {
 			continue
 		}
 
@@ -580,6 +601,13 @@ func (s *Server) broadcastOperationLog(logType, message string, context map[stri
 		enhancedEntry.Level = "error"
 	}
 
+	// Lift turn_id (stamped into context by processChatMessage's call sites)
+	// onto the dedicated field so matchesFilters/GetFilteredEntries can index
+	// on it directly instead of every caller unpacking the context map.
+	if turnID, ok := context["turn_id"].(string); ok {
+		enhancedEntry.TurnID = turnID
+	}
+
 	// Add to enhanced log buffer
 	s.enhancedLogBuffer.AddEntry(enhancedEntry)
 	
@@ -956,7 +984,8 @@ func (s *Server) handleChat(c *gin.Context) {
 	})
 
 	// Validate model with longer timeout for Mistral API calls
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	turnID := uuid.New().String()
+	ctx, cancel := context.WithTimeout(contextWithTurn(c.Request.Context(), turnID), 60*time.Second)
 	defer cancel()
 
 	validModel, err := s.llmClient.ValidateModel(ctx, request.Model)
@@ -988,7 +1017,7 @@ func (s *Server) handleChat(c *gin.Context) {
 		"model": request.Model,
 	})
 	
-	response, err := s.processChatMessage(ctx, request.Message, request.Model, nil)
+	response, objectCount, err := s.processChatMessage(ctx, request.Message, request.Model, nil)
 	elapsedTime := time.Since(startTime)
 	
 	if err != nil {
@@ -1066,9 +1095,11 @@ func (s *Server) handleChat(c *gin.Context) {
 		"message": response.Message,
 		"type": "success",
 		"timestamp": time.Now().Format(time.RFC3339),
+		"turn_id": turnID,
 		"performance": gin.H{
 			"processing_time_ms": elapsedTime.Milliseconds(),
 			"model": request.Model,
+			"objects_returned": objectCount,
 		},
 	}
 
@@ -1087,6 +1118,8 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	model := c.PostForm("model")
 	timestamp := time.Now().Format("15:04:05")
 
+	turnID := uuid.New().String()
+
 	// Log user request with headers and payload
 	userHeaders := map[string]string{
 		"User-Agent": c.Request.UserAgent(),
@@ -1094,14 +1127,15 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"Accept": c.Request.Header.Get("Accept"),
 		"Referer": c.Request.Referer(),
 	}
-	
+
 	userPayload := map[string]string{
 		"message": message,
 		"model": model,
 	}
-	
+
 	s.logAPICall("user", "POST", "/chat", userHeaders, userPayload, map[string]interface{}{
 		"timestamp": timestamp,
+		"turn_id":   turnID,
 	})
 
 	if message == "" {
@@ -1133,11 +1167,11 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 	})
 
 	// Process the chat message
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(contextWithTurn(c.Request.Context(), turnID), 60*time.Second)
 	defer cancel()
 
 	turnStart := time.Now()
-	response, err := s.processChatMessage(ctx, message, model, nil)
+	response, objectCount, err := s.processChatMessage(ctx, message, model, nil)
 	turnDuration := time.Since(turnStart)
 	if err != nil {
 		s.logger.Error("Failed to process chat message", zap.Error(err))
@@ -1169,8 +1203,9 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"tool_calls": len(response.ToolCalls),
 		"response_length": len(assistantMessage),
 		"duration_ms": turnDuration.Milliseconds(),
+		"turn_id":     turnID,
 	})
-	
+
 	c.HTML(http.StatusOK, "chat.html", gin.H{
 		"userMessage":      message,
 		"assistantMessage": assistantMessage,
@@ -1180,18 +1215,45 @@ func (s *Server) handleHTMXChat(c *gin.Context) {
 		"hasToolErrors":   hasToolErrors,
 		"timestamp":       time.Now().Format("15:04:05"),
 		"showDebug":       true,
+		"turnID":          turnID,
+		"toolCallCount":   len(response.ToolCalls),
+		"durationMs":      turnDuration.Milliseconds(),
+		"objectCount":     objectCount,
 	})
-	
+
 	s.broadcastOperationLog("success", "HTMX chat completed successfully", map[string]interface{}{
 		"message": message,
 		"response_length": len(assistantMessage),
 		"tool_calls": len(response.ToolCalls),
 		"duration_ms": turnDuration.Milliseconds(),
+		"turn_id":     turnID,
 	})
 }
 
-// processChatMessage processes a chat message and returns a response
-func (s *Server) processChatMessage(ctx context.Context, message, model string, history []llm.ChatMessage) (*llm.LLMResponse, error) {
+// countResultObjects estimates how many Avi objects a tool result represents,
+// for the per-turn trace summary chip: an Avi list envelope's `results` array,
+// a bare JSON array, or else a single object.
+func countResultObjects(result interface{}) int {
+	switch v := result.(type) {
+	case map[string]interface{}:
+		if results, ok := v["results"].([]interface{}); ok {
+			return len(results)
+		}
+		return 1
+	case []interface{}:
+		return len(v)
+	default:
+		return 1
+	}
+}
+
+// processChatMessage processes a chat message and returns a response along
+// with the number of Avi objects its tool calls returned (for the trace
+// summary chip). turn_id is read off ctx (see contextWithTurn) and stamped
+// onto every log entry emitted here so the inspector can correlate them.
+func (s *Server) processChatMessage(ctx context.Context, message, model string, history []llm.ChatMessage) (*llm.LLMResponse, int, error) {
+	turnID := turnIDFromContext(ctx)
+
 	// Convert history to the appropriate type based on provider
 	var convertedHistory interface{}
 	if s.config.Provider == "ollama" {
@@ -1206,7 +1268,8 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 			tools = mcpClient.Tools()
 		} else {
 			s.broadcastOperationLog("warning", "Avi MCP client unavailable, using built-in tool set", map[string]interface{}{
-				"error": err.Error(),
+				"error":   err.Error(),
+				"turn_id": turnID,
 			})
 			tools = llm.GetAviToolDefinitions()
 		}
@@ -1217,7 +1280,8 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 		"model":   model,
 		"message": message,
 	}, map[string]interface{}{
-		"step": "plan",
+		"step":    "plan",
+		"turn_id": turnID,
 	})
 	llmStart := time.Now()
 	var err error
@@ -1229,35 +1293,41 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 			"model":       model,
 			"duration_ms": llmDuration.Milliseconds(),
 			"error":       err.Error(),
+			"turn_id":     turnID,
 		})
 		if s.config.Provider == "ollama" {
-			return nil, fmt.Errorf("Ollama LLM processing failed: %w", err)
+			return nil, 0, fmt.Errorf("Ollama LLM processing failed: %w", err)
 		}
-		return nil, fmt.Errorf("LLM processing failed: %w", err)
+		return nil, 0, fmt.Errorf("LLM processing failed: %w", err)
 	}
 	s.logAPIResponse("mistral", "POST", "/chat/completions", 200, nil, nil, map[string]interface{}{
 		"step":                "plan",
 		"model":               model,
 		"duration_ms":         llmDuration.Milliseconds(),
 		"tool_calls_selected": len(llmResponse.ToolCalls),
+		"turn_id":             turnID,
 	})
+
+	objectCount := 0
 
 	// If there are tool calls, execute them
 	if len(llmResponse.ToolCalls) > 0 {
 		s.broadcastOperationLog("info", "Executing tool calls", map[string]interface{}{
 			"tool_call_count": len(llmResponse.ToolCalls),
+			"turn_id":         turnID,
 		})
-		
+
 		var toolResults []string
 		var toolErrors []string
-		
+
 		for i, toolCall := range llmResponse.ToolCalls {
 			s.broadcastOperationLog("info", "Executing tool call", map[string]interface{}{
 				"tool_call_index": i,
 				"tool_name": toolCall.Function.Name,
 				"arguments": toolCall.Function.Arguments,
+				"turn_id":   turnID,
 			})
-			
+
 			toolStart := time.Now()
 			result, err := s.executeToolCall(ctx, toolCall)
 			toolDuration := time.Since(toolStart)
@@ -1268,6 +1338,7 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 					"tool": toolCall.Function.Name,
 					"error": err.Error(),
 					"duration_ms": toolDuration.Milliseconds(),
+					"turn_id":     turnID,
 				})
 				// Continue with other tool calls even if one fails
 				continue
@@ -1275,6 +1346,7 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 
 			// Add the result to the response message
 			if result != nil {
+				objectCount += countResultObjects(result)
 				resultStr := fmt.Sprintf("Tool call result: %s - Success", toolCall.Function.Name)
 				toolResults = append(toolResults, resultStr)
 				resultJSON, err := json.MarshalIndent(result, "", "  ")
@@ -1286,15 +1358,17 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 					"tool": toolCall.Function.Name,
 					"result": result,
 					"duration_ms": toolDuration.Milliseconds(),
+					"turn_id":     turnID,
 				})
 			} else {
 				s.broadcastOperationLog("warning", "Tool call returned empty result", map[string]interface{}{
 					"tool": toolCall.Function.Name,
 					"duration_ms": toolDuration.Milliseconds(),
+					"turn_id":     turnID,
 				})
 			}
 		}
-		
+
 		// Add summary to response
 		if len(toolResults) > 0 || len(toolErrors) > 0 {
 			llmResponse.Message += "\n\n=== Tool Execution Summary ==="
@@ -1307,7 +1381,7 @@ func (s *Server) processChatMessage(ctx context.Context, message, model string, 
 		}
 	}
 
-	return llmResponse, nil
+	return llmResponse, objectCount, nil
 }
 
 // executeToolCall executes a tool call against the Avi API. Tool calls whose
@@ -1775,8 +1849,9 @@ func (s *Server) handleEnhancedLogs(c *gin.Context) {
 	logType := c.Query("type")
 	level := c.Query("level")
 	search := c.Query("search")
+	turn := c.Query("turn")
 	limit := 1000 // Default limit
-	
+
 	if limitParam := c.Query("limit"); limitParam != "" {
 		if parsedLimit, err := strconv.Atoi(limitParam); err == nil && parsedLimit > 0 {
 			limit = parsedLimit
@@ -1786,12 +1861,12 @@ func (s *Server) handleEnhancedLogs(c *gin.Context) {
 	// Check if this is an SSE request
 	if c.GetHeader("Accept") == "text/event-stream" {
 		// SSE streaming mode
-		s.handleEnhancedLogsSSE(c, logType, level, search)
+		s.handleEnhancedLogsSSE(c, logType, level, search, turn)
 		return
 	}
 
 	// Regular HTTP mode - return filtered logs
-	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search)
+	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search, turn)
 	
 	// Apply limit
 	if len(entries) > limit {
@@ -1803,7 +1878,7 @@ func (s *Server) handleEnhancedLogs(c *gin.Context) {
 }
 
 // handleEnhancedLogsSSE provides Server-Sent Events with filtering
-func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search string) {
+func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search, turn string) {
 	// Set SSE headers
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
@@ -1811,7 +1886,7 @@ func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search st
 	c.Header("Access-Control-Allow-Origin", "*")
 
 	// Send existing logs that match filters
-	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search)
+	entries := s.enhancedLogBuffer.GetFilteredEntries(logType, level, search, turn)
 	for _, entry := range entries {
 		data, err := json.Marshal(entry)
 		if err != nil {
@@ -1834,7 +1909,7 @@ func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search st
 		select {
 		case newEntry := <-logChan:
 			// Apply filters to new entries
-			if s.matchesFilters(newEntry, logType, level, search) {
+			if s.matchesFilters(newEntry, logType, level, search, turn) {
 				data, err := json.Marshal(newEntry)
 				if err != nil {
 					s.logger.Error("Failed to marshal new log entry for SSE", zap.Error(err))
@@ -1851,7 +1926,7 @@ func (s *Server) handleEnhancedLogsSSE(c *gin.Context, logType, level, search st
 }
 
 // matchesFilters checks if a log entry matches the given filters
-func (s *Server) matchesFilters(entry EnhancedLogEntry, logType, level, search string) bool {
+func (s *Server) matchesFilters(entry EnhancedLogEntry, logType, level, search, turn string) bool {
 	// Type filter
 	if logType != "" && logType != "all" && !strings.HasPrefix(entry.Type, logType) {
 		return false
@@ -1859,6 +1934,11 @@ func (s *Server) matchesFilters(entry EnhancedLogEntry, logType, level, search s
 
 	// Level filter
 	if level != "" && level != "all" && entry.Level != level {
+		return false
+	}
+
+	// Turn filter
+	if turn != "" && entry.TurnID != turn {
 		return false
 	}
 

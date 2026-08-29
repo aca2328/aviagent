@@ -37,12 +37,18 @@
 
 <!-- Assistant Response - Always show if there are tool calls or assistant message -->
 {{if or .assistantMessage .toolCalls}}
-<div class="message assistant-message">
+<div class="message assistant-message" {{if .turnID}}data-turn-id="{{.turnID}}"{{end}}>
     <div class="message-header">
         <strong><i class="fas fa-robot"></i> Assistant</strong>
         <span class="timestamp">{{.timestamp}}</span>
         {{if .model}}
         <span class="badge bg-secondary ms-2">{{.model}}</span>
+        {{end}}
+        {{if .turnID}}
+        <button type="button" class="trace-summary-chip" data-turn-id="{{.turnID}}" title="View this turn's trace steps">
+            <i class="fas fa-diagram-project"></i>
+            {{.toolCallCount}} tool{{if ne .toolCallCount 1}}s{{end}} &middot; {{.durationMs}}ms{{if .objectCount}} &middot; {{.objectCount}} object{{if ne .objectCount 1}}s{{end}}{{end}}
+        </button>
         {{end}}
     </div>
     <div class="message-content">

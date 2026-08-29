@@ -93,6 +93,20 @@ function initializeDiagramDownload() {
 let logPauseState = false;
 let logJsonIdCounter = 0;
 let pausedEntries = [];
+// Per-turn correlation (Phase 3): set by clicking a message's trace-summary
+// chip, cleared via the inspector's "Clear" banner. reconnectTraceStream is
+// wired up by initializeTraceFiltering so this module-scope setter can force
+// a fresh /api/logs/enhanced?turn=... stream without knowing about segments
+// or search state.
+let turnFilter = null;
+let reconnectTraceStream = null;
+
+function setTurnFilter(turnId) {
+    turnFilter = turnId;
+    const banner = document.getElementById('trace-turn-banner');
+    if (banner) banner.classList.toggle('d-none', !turnId);
+    if (reconnectTraceStream) reconnectTraceStream();
+}
 
 function updatePausedFooter() {
     const statusText = document.getElementById('trace-status-text');
@@ -250,6 +264,9 @@ function createLogElement(logEntry) {
 
     const step = document.createElement('div');
     step.className = 'trace-step trace-step-' + info.kind;
+    if (logEntry.turn_id) {
+        step.dataset.turnId = logEntry.turn_id;
+    }
 
     const gutter = document.createElement('div');
     gutter.className = 'trace-step-gutter';
@@ -266,6 +283,10 @@ function createLogElement(logEntry) {
 
     const titleRow = document.createElement('div');
     titleRow.className = 'trace-step-title-row';
+    if (logEntry.turn_id) {
+        titleRow.classList.add('is-turn-linked');
+        titleRow.title = "Jump to this turn's message";
+    }
 
     const title = document.createElement('span');
     title.className = 'trace-step-title';
@@ -447,7 +468,10 @@ function initializeTraceFiltering() {
         const level = activeSeg.dataset.level || 'all';
         const search = searchInput.value;
 
-        const url = `/api/logs/enhanced?type=${logType}&level=${level}&search=${encodeURIComponent(search)}`;
+        let url = `/api/logs/enhanced?type=${logType}&level=${level}&search=${encodeURIComponent(search)}`;
+        if (turnFilter) {
+            url += `&turn=${encodeURIComponent(turnFilter)}`;
+        }
 
         currentEventSource = new EventSource(url);
 
@@ -499,7 +523,45 @@ function initializeTraceFiltering() {
         searchTimeout = setTimeout(connectTraceStream, 500);
     });
 
+    const clearTurnFilterBtn = document.getElementById('clear-turn-filter');
+    if (clearTurnFilterBtn) {
+        clearTurnFilterBtn.addEventListener('click', function() {
+            setTurnFilter(null);
+        });
+    }
+
+    // Trace step -> message: click a step's title row to scroll to and
+    // highlight the assistant message it belongs to (the other half of the
+    // chip's message -> steps link below).
+    logsDisplay.addEventListener('click', function(e) {
+        const titleRow = e.target.closest('.trace-step-title-row');
+        if (!titleRow || !titleRow.classList.contains('is-turn-linked')) return;
+        const step = titleRow.closest('.trace-step');
+        const turnId = step && step.dataset.turnId;
+        if (!turnId) return;
+        const message = document.querySelector('.assistant-message[data-turn-id="' + turnId + '"]');
+        if (!message) return;
+        message.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        message.classList.add('is-highlighted');
+        setTimeout(function() { message.classList.remove('is-highlighted'); }, 1800);
+    });
+
+    reconnectTraceStream = connectTraceStream;
     connectTraceStream();
+}
+
+// Message -> trace steps: click a message's trace-summary chip to isolate
+// the inspector to that turn's steps (via /api/logs/enhanced?turn=...).
+// Delegated on #chat-messages since assistant messages are swapped in by
+// htmx, not present at DOMContentLoaded time.
+function initializeTurnChipLinking() {
+    const chatMessages = document.getElementById('chat-messages');
+    if (!chatMessages) return;
+    chatMessages.addEventListener('click', function(e) {
+        const chip = e.target.closest('.trace-summary-chip');
+        if (!chip) return;
+        setTurnFilter(chip.dataset.turnId);
+    });
 }
 
 // Empty-state prompt buttons (screen 2a): fill the composer and submit.
@@ -531,6 +593,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializeDiagramDownload();
     initializeTooltips();
     initializeTraceFiltering();
+    initializeTurnChipLinking();
     initializePromptButtons();
 
     const messageInput = document.getElementById('message-input');
