@@ -17,7 +17,7 @@ avi:
 mcp:
   enabled: true
   command: "node"
-  server_path: "" # empty = auto-detect mcp-avi-server/build/index.js (dev) or /opt/avi-mcp-server/build/index.js (docker)
+  server_path: "" # empty = auto-detect mcp-avi-server/build/index.js (dev) or /opt/avi-mcp-server/build/index.js (container)
 
 llm:
   ollama_host: "http://localhost:11434"

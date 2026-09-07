@@ -12,10 +12,8 @@ GOOS := $(shell go env GOOS)
 GOARCH := $(shell go env GOARCH)
 GO_VERSION := $(shell go version | cut -d ' ' -f 3)
 
-# Docker variables
-REGISTRY ?= localhost
-IMAGE_NAME := ${REGISTRY}/${APP_NAME}
-DOCKER_TAG ?= ${VERSION}
+# Container variables (Apple's `container` CLI)
+IMAGE_NAME := ${APP_NAME}
 
 # Directories
 BUILD_DIR := build
@@ -35,7 +33,6 @@ clean: ## Clean build artifacts
 	@rm -rf ${BUILD_DIR}
 	@go clean -cache
 	@go clean -testcache
-	@docker system prune -f --filter "label=app=${APP_NAME}" 2>/dev/null || true
 
 .PHONY: deps
 deps: ## Download dependencies
@@ -125,41 +122,25 @@ run-dev: ## Run in development mode
 	@echo "🚀 Starting ${APP_NAME} in development mode..."
 	@go run . -config config.yaml
 
-.PHONY: docker-build
-docker-build: ## Build Docker image
-	@echo "🐳 Building Docker image..."
-	@docker build -t ${IMAGE_NAME}:${DOCKER_TAG} -t ${IMAGE_NAME}:latest .
-	@echo "Built: ${IMAGE_NAME}:${DOCKER_TAG}"
+.PHONY: container-build
+container-build: ## Build the image with Apple's `container` CLI
+	@echo "📦 Building container image..."
+	@container build -t ${IMAGE_NAME} .
+	@echo "Built: ${IMAGE_NAME}"
 
-.PHONY: docker-run
-docker-run: docker-build ## Build and run Docker container
-	@echo "🐳 Running Docker container..."
-	@docker run --rm -p 8080:8080 \
-		-e AVI_HOST=${AVI_HOST} \
-		-e AVI_USERNAME=${AVI_USERNAME} \
-		-e AVI_PASSWORD=${AVI_PASSWORD} \
-		-e OLLAMA_HOST=${OLLAMA_HOST} \
-		${IMAGE_NAME}:${DOCKER_TAG}
+.PHONY: container-up
+container-up: ## Build and run with Apple's `container` CLI
+	@echo "📦 Starting ${APP_NAME}..."
+	@./container-run.sh up
 
-.PHONY: docker-push
-docker-push: docker-build ## Push Docker image to registry
-	@echo "🐳 Pushing Docker image to registry..."
-	@docker push ${IMAGE_NAME}:${DOCKER_TAG}
-	@docker push ${IMAGE_NAME}:latest
+.PHONY: container-down
+container-down: ## Stop the container
+	@echo "📦 Stopping ${APP_NAME}..."
+	@./container-run.sh down
 
-.PHONY: docker-compose-up
-docker-compose-up: ## Start all services with Docker Compose
-	@echo "🐳 Starting services with Docker Compose..."
-	@docker-compose up -d --build
-
-.PHONY: docker-compose-down
-docker-compose-down: ## Stop all services with Docker Compose
-	@echo "🐳 Stopping services with Docker Compose..."
-	@docker-compose down
-
-.PHONY: docker-compose-logs
-docker-compose-logs: ## View Docker Compose logs
-	@docker-compose logs -f
+.PHONY: container-logs
+container-logs: ## View container logs
+	@./container-run.sh logs
 
 .PHONY: setup-dev
 setup-dev: ## Setup development environment
@@ -174,7 +155,7 @@ pre-commit: fmt lint vet security test ## Run all pre-commit checks
 	@echo "✅ All pre-commit checks passed!"
 
 .PHONY: release-check
-release-check: clean deps pre-commit build docker-build ## Run all release checks
+release-check: clean deps pre-commit build container-build ## Run all release checks
 	@echo "✅ All release checks passed!"
 
 .PHONY: install
@@ -202,14 +183,6 @@ version: ## Show version information
 health-check: ## Check if the application is running
 	@echo "🔍 Checking application health..."
 	@curl -f http://localhost:8080/api/health || echo "❌ Application not responding"
-
-.PHONY: demo
-demo: ## Run a demo environment
-	@echo "🎬 Starting demo environment..."
-	@docker-compose -f docker-compose.yml -f docker-compose.demo.yml up -d
-	@echo "✅ Demo environment started!"
-	@echo "🌐 Open http://localhost:8080 in your browser"
-	@echo "📊 Monitoring available at http://localhost:3000 (admin/admin)"
 
 .PHONY: docs-serve
 docs-serve: ## Serve documentation locally

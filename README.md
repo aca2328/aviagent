@@ -14,7 +14,7 @@ A Go web agent that lets you manage a VMware Avi (NSX ALB) Load Balancer in plai
 
 ## Quick Start
 
-Requires Docker and Docker Compose, and access to an Avi Controller.
+Requires Apple's `container` CLI (macOS 15+, Apple Silicon — https://github.com/apple/container), and access to an Avi Controller.
 
 ```bash
 git clone https://github.com/aca2328/aviagent.git
@@ -27,7 +27,7 @@ cd aviagent
 ./start-ollama.sh
 ```
 
-Both scripts write a `.env` file and start the app with `docker-compose`. Open `http://localhost:8088` once it's up.
+Both scripts write a `.env` file and start the app with `./container-run.sh up`. Open `http://localhost:8088` once it's up.
 
 **Manual setup**, if you'd rather not use the scripts:
 
@@ -36,13 +36,34 @@ cp .env.example .env
 # edit .env: set AVI_HOST/AVI_USERNAME/AVI_PASSWORD, and either
 # MISTRAL_API_KEY (LLM_PROVIDER=python) or leave it for Ollama
 
-docker-compose --env-file .env up -d --scale ollama=0   # Mistral, no Ollama container
-docker-compose --env-file .env up -d                    # Ollama, includes the Ollama service
+./container-run.sh up
 
 curl http://localhost:8088/api/health
 ```
 
-> **Docker is the only supported way to run this app** — there's no supported `go run`/binary path. See `Development` below for building and testing without running it.
+### Start on login, restart on crash
+
+`container-boot.sh` is a polling supervisor loop: it resumes the `aviagent`
+container at login (building it first if it doesn't exist yet), then checks
+every 15s and restarts it if it crashes — wired up as a per-user LaunchAgent
+with `KeepAlive`:
+
+```bash
+cp com.aviagent.boot.plist.example ~/Library/LaunchAgents/com.aviagent.boot.plist
+# edit the plist's paths if this repo isn't at ~/GitHub/aviagent
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.aviagent.boot.plist
+```
+
+Because of `KeepAlive`, `./container-run.sh down` while this is loaded gets
+undone within 15s — unload the agent first (`launchctl bootout
+gui/$(id -u)/com.aviagent.boot`) for an intentional stop.
+
+Logs at `~/Library/Logs/aviagent-boot.log`. Apple's `container` system
+services (the apiserver) auto-start at login on their own via
+`com.apple.container.autostart.plist`; this job just waits for that, then
+starts the app container.
+
+> **The `container` CLI is the only supported way to run this app** — there's no supported `go run`/binary path. See `Development` below for building and testing without running it.
 
 ## Usage
 
@@ -125,20 +146,19 @@ curl "http://localhost:8088/api/avi/virtualservice?limit_by=10"
 
 > `/api/chat` doesn't create or use a session, so it's permanently read-only with no unlock path — a write request just comes back as a blocked-write result. Only the web UI tracks a session's read-only/read-write mode.
 
-## Docker Administration
+## Container Administration
 
 ```bash
-docker-compose logs -f avi-llm-agent          # follow logs
-docker-compose restart                        # restart
-docker-compose --env-file .env up -d --build  # rebuild after a code change (config.yaml alone is volume-mounted; nothing else is)
-docker-compose down                           # stop (add -v to also drop the sessions volume)
+./container-run.sh logs   # follow logs
+./container-run.sh up     # rebuild + restart after a code change (config.yaml alone is volume-mounted; nothing else is)
+./container-run.sh down   # stop and remove the container
 ```
 
-Chat sessions live in a named Docker volume (`aviagent-sessions`) so they survive `--build`. To switch providers, set `LLM_PROVIDER` in `.env` (`python` for Mistral, `ollama` for Ollama) and restart:
+Chat sessions live in `./data/sessions` (bind-mounted into the container) so they survive rebuilds. To switch providers, set `LLM_PROVIDER` in `.env` (`python` for Mistral, `ollama` for Ollama) and restart:
 
 ```bash
-docker-compose --env-file .env up -d --build
-docker-compose exec ollama ollama pull llama3.2   # only needed after switching to Ollama
+./container-run.sh up
+ollama pull llama3.2   # on the host — Ollama runs natively, not in a container; only needed after switching to Ollama
 ```
 
 ## Troubleshooting
@@ -152,14 +172,14 @@ curl -u "$AVI_USERNAME:$AVI_PASSWORD" -k https://$AVI_HOST/login
 **Check which provider is active / debug logs**
 ```bash
 curl -s http://localhost:8088/api/health | jq .
-docker-compose exec avi-llm-agent env | grep -E 'LLM_PROVIDER|MISTRAL_API_KEY'
+container exec aviagent env | grep -E 'LLM_PROVIDER|MISTRAL_API_KEY'
 ```
-Set `level: "debug"` under `log:` in `config.yaml`, then `docker-compose --env-file .env up -d --build` to pick it up.
+Set `level: "debug"` under `log:` in `config.yaml`, then `./container-run.sh up` to pick it up.
 
-**Ollama model missing**
+**Ollama model missing** — Ollama runs natively on the host, not in a container:
 ```bash
-docker-compose exec ollama ollama list
-docker-compose exec ollama ollama pull llama3.2
+ollama list
+ollama pull llama3.2
 ```
 
 **MCP tool calling not working** (falls back to a smaller static tool set) — check `mcp-avi-server/build/index.js` exists; it's a separate npm build, not wired into `make build`:
@@ -191,7 +211,7 @@ mcp-avi-server/  # separate TypeScript MCP server (generic Avi CRUD tools)
 web/
   templates/ # Gin HTML templates (HTMX), what's actually served
   static/    # CSS/JS for the templates above
-  src/       # a separate, unused React app — not built into Docker
+  src/       # a separate, unused React app — not built into the container image
 ```
 
 ## License

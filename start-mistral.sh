@@ -30,19 +30,19 @@ check_env_file() {
                 echo "📝 Starting VMware Avi LLM Agent with Mistral AI..."
                 echo "📝 Using Mistral AI cloud service (no local Ollama required)"
                 echo
-                docker-compose --env-file .env up -d --scale ollama=0
-                
+                ./container-run.sh up
+
                 if [ $? -eq 0 ]; then
                     echo "✅ Application started successfully with existing configuration!"
                     echo
                     # Extract port from .env or use default
-                    LOCAL_PORT=$(grep -E "^SERVER_PORT=" .env | cut -d'=' -f2 || echo "8080")
+                    LOCAL_PORT=$(grep -E "^SERVER_PORT=" .env | cut -d'=' -f2 || echo "8088")
                     echo "🌐 Access the application at: http://localhost:$LOCAL_PORT"
                     echo "📊 Health check endpoint: http://localhost:$LOCAL_PORT/api/health"
                     echo "💬 API endpoint: http://localhost:$LOCAL_PORT/api/chat"
                     echo
-                    echo "📋 To stop the application, run: docker-compose down"
-                    echo "📋 To view logs, run: docker-compose logs -f avi-llm-agent"
+                    echo "📋 To stop the application, run: ./container-run.sh down"
+                    echo "📋 To view logs, run: ./container-run.sh logs"
                 else
                     echo "❌ Failed to start the application with existing configuration"
                 fi
@@ -50,7 +50,7 @@ check_env_file() {
                 ;;
             *)
                 echo "🔴 Operation cancelled. Existing .env file preserved."
-                echo "📋 To use the existing configuration later, run: docker-compose --env-file .env up -d --scale ollama=0"
+                echo "📋 To use the existing configuration later, run: ./container-run.sh up"
                 exit 0
                 ;;
         esac
@@ -66,18 +66,13 @@ echo "🚀 VMware Avi LLM Agent - Mistral AI Setup"
 echo "========================================"
 echo
 
-# Check if docker and docker-compose are installed
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker is not installed. Please install Docker first."
+# Check if Apple's `container` CLI is installed
+if ! command -v container &> /dev/null; then
+    echo "❌ Apple's container CLI is not installed. Install it from https://github.com/apple/container"
     exit 1
 fi
 
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ Docker Compose is not installed. Please install Docker Compose first."
-    exit 1
-fi
-
-echo "✅ Docker and Docker Compose are installed"
+echo "✅ container CLI is installed"
 echo
 
 # Get user input for configuration
@@ -187,7 +182,7 @@ echo
 echo "🚀 Starting VMware Avi LLM Agent with Mistral AI..."
 echo "📝 Using Mistral AI cloud service (no local Ollama required)"
 echo
-docker-compose --env-file .env up -d --scale ollama=0
+PORT="$SERVER_PORT" ./container-run.sh up
 
 if [ $? -eq 0 ]; then
     echo "✅ Application started successfully!"
@@ -196,8 +191,8 @@ if [ $? -eq 0 ]; then
     echo "📊 Health check endpoint: http://localhost:$SERVER_PORT/api/health"
     echo "💬 API endpoint: http://localhost:$SERVER_PORT/api/chat"
     echo
-    echo "📋 To stop the application, run: docker-compose down"
-    echo "📋 To view logs, run: docker-compose logs -f avi-llm-agent"
+    echo "📋 To stop the application, run: ./container-run.sh down"
+    echo "📋 To view logs, run: ./container-run.sh logs"
 else
     echo "❌ Failed to start the application"
     exit 1

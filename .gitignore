@@ -81,8 +81,8 @@ __pycache__/
 # Go coverage outputs
 *.out
 
-# Docker related
-docker-compose.override.yml
+# Chat session data (bind-mounted into the container by container-run.sh)
+/data/
 
 # Local development files
 *.local
